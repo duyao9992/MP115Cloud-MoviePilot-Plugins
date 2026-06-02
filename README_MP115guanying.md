@@ -1,16 +1,12 @@
-# MP115Cloud - MoviePilot 115 云下载接管插件
+# MP115guanying - MoviePilot 高端玩家115云下载接管插件
 
 这个插件用于 MoviePilot V2：当 MoviePilot 订阅命中资源并准备添加到下载器前，插件会先请求你配置的非公开搜索页；如果页面里有匹配的 `magnet:` 链接并且成功提交到 115 离线下载，就拦截 MoviePilot 原下载。搜索不到、匹配不达标、115 提交失败时，不做任何拦截，MoviePilot 会继续走原来的 PT/qBittorrent 流程。
-
-当前版本：`1.0.9`
-
-同一仓库还提供 `MP115guanying`（高端玩家115云下载接管），可在 MoviePilot 插件市场中搜索安装。
 
 ## 文件结构
 
 ```text
-plugins/mp115cloud/__init__.py
-plugins.v2/mp115cloud/__init__.py
+plugins/mp115guanying/__init__.py
+plugins.v2/mp115guanying/__init__.py
 package.json
 package.v2.json
 README.md
@@ -18,31 +14,15 @@ README.md
 
 ## 在线安装
 
-推荐把本目录作为一个 GitHub 插件仓库发布，仓库根目录保持下面结构：
-
-```text
-plugins/mp115cloud/__init__.py
-plugins.v2/mp115cloud/__init__.py
-package.json
-package.v2.json
-README.md
-```
-
-发布到 GitHub `main` 分支后，在 MoviePilot V2 的插件市场设置里添加你的仓库地址，例如：
+在 MoviePilot V2 的插件市场设置里添加仓库地址：
 
 ```text
 https://github.com/duyao9992/MP115Cloud-MoviePilot-Plugins
 ```
 
+刷新插件市场后搜索 `高端玩家115云下载接管` 或 `MP115guanying`，再从界面安装。
+
 仓库地址不要带 `.git`，也不要填 `raw.githubusercontent.com` 链接。
-
-刷新插件市场后搜索 `115 云下载接管` 或 `MP115Cloud`，再从界面安装。这样后续升级只需要提交新版代码并同步 `package.v2.json` 和插件里的 `plugin_version`。
-
-## 手动安装
-
-1. 把 `plugins.v2/mp115cloud` 复制到你的 MoviePilot 插件仓库或容器插件目录。
-2. 如果你维护自己的插件市场，把 `package.v2.json` 中的 `MP115Cloud` 合并到插件仓库根目录的 `package.v2.json`。
-3. 重启 MoviePilot，或在插件页面重载插件。
 
 ## 推荐配置
 
@@ -53,9 +33,16 @@ https://github.com/duyao9992/MP115Cloud-MoviePilot-Plugins
 仅处理订阅: 打开
 成功后拦截原下载: 打开
 成功后更新订阅状态: 打开
-搜索页/首页 URL: http://your-internal-site/ 或 http://your-internal-site/search?q={keyword}
+搜索页/首页 URL: https://www.xn--kivn76b41nnhi.com/search?q={keyword}&type=&mode=1
+搜索站点登录 URL: https://www.xn--kivn76b41nnhi.com/user/login
+搜索站点账号: 填你的账号
+搜索站点密码: 填你的密码
 搜索关键词模板: {title}
 必须包含中文字幕: 打开
+启用订阅兜底扫描: 按需打开
+兜底扫描订阅状态: 已搜索未完成(R)
+兜底扫描间隔(分钟): 60
+每次最多扫描订阅数: 5
 结果列表路径: data
 JSON 磁链字段路径: magnet
 JSON 标题字段路径: title
@@ -90,6 +77,13 @@ JSON 做种数字段路径: seeders
 ```
 
 也支持把磁链放在 `data-clipboard-text`、`data-url` 等属性里。标题优先取 `title`、`aria-label`、`data-title`、`data-name`，其次取链接文本。
+
+从 `1.0.2` 起，默认接入 `www.星际穿越.com`（Punycode：`www.xn--kivn76b41nnhi.com`）：
+
+1. 默认搜索入口为 `/search?q={keyword}&type=&mode=1`，关键词继续使用 MoviePilot 媒体标题。
+2. 插件页面新增搜索站点登录 URL、账号和密码；默认账号密码可直接改成其它可用账号。
+3. 搜索站点返回“浏览器安全验证”时，会先完成该站的计算验证，再继续登录、搜索、进入详情页和资源磁力页。
+4. 磁力资源筛选仍沿用原规则：标题/年份/系列部数/电视剧目标季硬过滤，资源必须满足中文字幕与清晰度规则，再按 `4K+杜比视界 > 4K > 1080P` 选择。
 
 从 `0.2.0` 起，如果搜索结果页没有直接放磁链，只放了详情页链接，插件会：
 
@@ -157,30 +151,63 @@ JSON 做种数字段路径: seeders
 
 从 `1.0.1` 起，如果 `/s/{keyword}/` 直接返回 `HTTP 403` 或其它请求失败，插件不会立刻回落 MoviePilot；会先尝试同关键词备用入口（如 `?wd=`、`?keyword=`、`/search`），再尝试通用降级关键词，并继续使用原有标题、年份、目标季、字幕和清晰度过滤。
 
-从 `1.0.2` 起，电视剧资源年份不再作为硬拒绝条件。电视剧资源标题里的年份常常是目标季上映年份，而 MoviePilot 媒体年份可能是整部剧首播年份；电视剧会以目标季为硬条件继续筛选，电影仍保留年份冲突硬拒绝。
+从 `1.0.2` 起，默认磁力站切换为 `https://www.xn--kivn76b41nnhi.com/`，默认搜索入口为 `/search?q={keyword}&type=&mode=1`；插件页可修改搜索站点 URL、登录 URL、账号和密码。站点的浏览器计算验证会在搜索请求链路里自动处理，筛选规则不变。
 
-从 `1.0.3` 起，同一订阅同一季整季包提交成功后，会按“订阅 ID + 季号”记录近期提交，不再依赖中文名、英文名、资源标题或年份；后续同季单集或资源标题事件会直接拦截，避免重复提交或回落 MoviePilot。
+从 `1.0.3` 起，针对这个站的搜索页前端渲染做兜底：HTML 里没有直接影片链接时，会请求 `/res/search_suggest?q=关键词` 获取 `dir/id/title`，拼出 `/mv/{id}`、`/tv/{id}` 等详情页入口，再继续走原来的详情页、资源页和磁力筛选流程。登录接口返回 `Loading...` 或空响应时，也会先确认登录态再决定是否告警。
 
-从 `1.0.7` 起，兼容缺少 `app.helper.subscribe` 的 MoviePilot 版本；插件安装后不会再因为 `SubscribeHelper` 导入失败而无法显示在“已安装”。搜索、匹配、提交和拦截规则不变。
+从 `1.0.4` 起，针对详情页资源列表异步加载补充 `/res/downurl/{dir}/{id}` 解析：插件从接口里的 `downlist.list.m/t/e/k` 生成 magnet，并继续套用原本的标题、季包、中文字幕、清晰度和做种筛选规则。
 
-从 `1.0.8` 起，同一订阅目标短时间内被 MoviePilot 连续触发多个候选事件时，插件仍会逐个拦截重复下载，但 60 秒内只打印一次“近期已提交”日志，避免日志刷屏。
+从 `1.0.5` 起，新增订阅兜底扫描和立即触发入口。MoviePilot 如果在 PT 站没有搜到任何资源，不会触发 `ChainEventType.ResourceDownload`，所以插件原来的“下载前接管”逻辑没有机会运行。现在可以用两种方式补上：
 
-从 `1.0.9` 起，演练模式日志会明确显示“未提交 115”，不再写成“已提交 115”；重复拦截日志也改为“订阅目标已由 115 接管”，避免误解为后续每个候选资源都已经提交过。
+1. 打开 `启用订阅兜底扫描`，插件会按间隔扫描订阅列表中 `已搜索未完成(R)` 的订阅，搜索资源站并提交 115。
+2. 在插件页面或 API 按订阅 ID 立即执行，也可以只填关键词做一次手动兜底搜索。
+
+手动入口：
+
+```text
+POST /api/v1/plugin/MP115guanying/fallback_scan?state=R&limit=5
+POST /api/v1/plugin/MP115guanying/fallback_subscribe?subscribe_id=123
+POST /api/v1/plugin/MP115guanying/fallback_subscribe?keyword=小倩
+```
+
+也可以通过 MoviePilot 命令 `/mp115guanying_fallback` 触发一次订阅兜底扫描。
+
+从 `1.0.6` 起，修复电视剧按季兜底时的年份误杀。MoviePilot 的剧集年份常是整部剧首播年，例如 `亢奋` 是 `2019`，而资源站第三季详情页可能写 `2026`；插件现在对电视剧以目标季为硬过滤，不再用这个年份差异拒绝正确季，电影仍保留年份硬校验。
+
+从 `1.0.7` 起，增强电视剧同季重复提交保护。MoviePilot 可能会在同一订阅完成前后连续触发多个下载事件，且 `origin` 或标题形态不完全一致，例如 `亢奋`、`亢奋 S01`；插件现在会额外记录“规范化剧名 + 目标季”的近期提交键，短时间内同一季不会重复提交 115，但不同季仍可独立处理。
+
+从 `1.0.8` 起，搜索前会先写入短时占位锁，避免多个 `ResourceDownload` 并发事件在第一个提交完成前同时越过重复保护。搜索词也会优先使用订阅/媒体标题，并清洗 PT 发布名里的清晰度、编码、发布组等信息，例如 `Born with Luck 1080p WEB-DL DDP5.1 H264-Pure@HDSWEB` 会被降噪为更适合资源站检索的媒体名，避免拿完整发布标题反复空搜。
+
+从 `1.0.15` 起，继续加固资源站资源接口分类解析：如果 `downlist.type.b` 里的 `i8/i5/i1` 等字段实际作为 `downlist.list` 中的分类字段名使用，插件会按每条资源的分类标记还原 `中字1080P`、`中字4K`、`4K` 等标签；如果接口仍未识别到分类，会输出一条不含账号/Cookie 的分类诊断日志，方便继续定位。
+
+从 `1.0.14` 起，资源站 `/res/downurl/{dir}/{id}` 资源接口里的分类标签会参与筛选：`中字1080P`、`中字4K` 会被识别为中文字幕资源，同时按 `1080P/4K` 参与优先级排序；`list.k` 不再被当成只允许 `0` 的资源开关，避免资源接口已经解析到磁链但被误判为无可用资源。
+
+从 `1.0.13` 起，插件展示名称改为“高端玩家115云下载接管”，并同步更新插件命令、订阅兜底服务名称和站内/微信通知标题。插件 ID 仍保持 `MP115guanying`，避免升级后丢失原配置。
+
+从 `1.0.12` 起，支持搜索站点镜像域名池和常用域名选择。插件会优先使用你手动选择的常用域名；当这个域名连接失败、搜索页/详情页未登录受限或资源接口异常时，自动切换到域名池里的下一个镜像，并使用当前镜像域名自己的 `/user/login` 登录后继续原来的搜索、详情页、资源接口和磁力筛选流程。
+
+从 `1.0.11` 起，命中后会立即停止后续搜索：插件会区分“搜索中的短锁”和“已经成功提交的成功锁”。同一订阅目标成功提交或命中同一 magnet 后，会补写纯标题+季数的成功锁，后续 `ResourceDownload` 和正在降级搜索的流程会直接停止，不再反复请求资源站。
+
+从 `1.0.10` 起，连续触发去重进一步加固：近期提交锁会在每次判断/抢占前重新读取插件持久化数据，并同步到进程内共享缓存；提交前同时按订阅目标和最终 magnet hash 占位，避免 MoviePilot 连续触发 `ResourceDownload` 或多个插件实例把同一季资源反复提交到 115。
+
+从 `1.0.9` 起，修复单季剧详情页不写 `第一季/S01` 时被误判为非目标季的问题。目标是第一季且详情页没有明确其它季时，会先进入详情页，再由资源标题继续做 `S01/全季包/中文字幕/清晰度` 硬筛。另新增磁链 hash 级近期锁，即使标题或 `origin` 不同，只要最终 magnet 相同，也不会重复提交 115。
 
 相关配置：
 
 ```text
 进入详情页抓磁链: 打开
 最多详情页数: 5
+启用订阅兜底扫描: 按需打开
+兜底扫描订阅状态: 已搜索未完成(R)
 ```
 
 日志会输出：
 
 ```text
-[MP115Cloud] 搜索页解析: 直接磁链 0 条，详情链接 20 条
-[MP115Cloud] 详情页候选 1: score=...
-[MP115Cloud] 磁力资源链接筛选: 80 / 285
-[MP115Cloud] 资源页磁链解析: 1 条
+[MP115guanying] 搜索页解析: 直接磁链 0 条，详情链接 20 条
+[MP115guanying] 详情页候选 1: score=...
+[MP115guanying] 磁力资源链接筛选: 80 / 285
+[MP115guanying] 资源页磁链解析: 1 条
 ```
 
 如果这个测试网站需要登录，把 Cookie 或 Authorization 放进 `搜索页请求头`：
@@ -226,7 +253,7 @@ www.example.test=192.168.31.10,192.168.31.11,192.168.31.12
 插件即使不填请求头，也会默认带上常见浏览器 `User-Agent`、`Accept`、`Accept-Language` 和 `Referer`。如果搜索请求成功返回，日志会出现类似：
 
 ```text
-[MP115Cloud] 搜索页已返回: HTTP 200, 内容 12345 字符, 类型 text/html, URL ...
+[MP115guanying] 搜索页已返回: HTTP 200, 内容 12345 字符, 类型 text/html, URL ...
 ```
 
 如果日志仍然是 `搜索请求失败: ... timed out`，说明 MoviePilot 容器还没有拿到页面，需要先处理容器网络、DNS 或代理；这时还没有进入 HTML/JSON 解析阶段。
@@ -234,7 +261,7 @@ www.example.test=192.168.31.10,192.168.31.11,192.168.31.12
 从 `0.1.2` 起，搜索前还会记录容器内的域名解析结果：
 
 ```text
-[MP115Cloud] 搜索请求准备: URL=..., host=..., port=443, DNS=['IPv4 x.x.x.x', 'IPv6 xxxx::...']
+[MP115guanying] 搜索请求准备: URL=..., host=..., port=443, DNS=['IPv4 x.x.x.x', 'IPv6 xxxx::...']
 ```
 
 如果电脑、手机和 NAS 都在同一网络但只有 NAS 超时，优先对比这里的 DNS/IP 与电脑浏览器实际访问的 IP，通常能定位到 hosts、DNS、IPv6 路由或容器网络差异。
@@ -294,15 +321,19 @@ BluRay / WEB-DL / H.265 / x265 / HEVC
 4. 插件进入影片页和资源磁力页，确认中文字幕后按 4K+杜比视界、4K、1080P 顺序选择磁链并提交到 115 离线任务。
 5. 115 返回成功后，插件设置 `event_data.cancel = True`，MoviePilot 不再添加 qBittorrent 下载。
 6. 任一步失败，插件不设置 cancel，MoviePilot 继续原流程。
+7. 如果 PT 搜索没有任何资源，MoviePilot 不会进入第 2 步；这时由 `订阅兜底扫描` 或 `fallback_subscribe` API 主动按订阅信息搜索资源站并提交 115。
 
 ## 测试接口
 
 MoviePilot 会给插件 API 加上插件前缀，常用测试：
 
 ```text
-GET  /api/v1/plugin/MP115Cloud/health
-GET  /api/v1/plugin/MP115Cloud/search?keyword=Example.Movie.2026
-POST /api/v1/plugin/MP115Cloud/submit?magnet=magnet:?xt=urn:btih:...
+GET  /api/v1/plugin/MP115guanying/health
+GET  /api/v1/plugin/MP115guanying/search?keyword=Example.Movie.2026
+POST /api/v1/plugin/MP115guanying/submit?magnet=magnet:?xt=urn:btih:...
+POST /api/v1/plugin/MP115guanying/fallback_scan?state=R&limit=5
+POST /api/v1/plugin/MP115guanying/fallback_subscribe?subscribe_id=123
+POST /api/v1/plugin/MP115guanying/fallback_subscribe?keyword=小倩
 ```
 
 具体前缀以你的 MoviePilot 部署为准。
@@ -310,7 +341,7 @@ POST /api/v1/plugin/MP115Cloud/submit?magnet=magnet:?xt=urn:btih:...
 ## 注意事项
 
 - 115 Cookie 至少需要包含 `UID`、`CID`、`SEID`。
-- `演练模式` 会完成搜索和匹配，但不会真正提交 115；要真实复制磁力到 115 必须关闭。
+- `演练模式` 会完成搜索和匹配，但不会真正提交 115，也适合第一次调试。
 - `成功后更新订阅状态` 默认开启。电影会直接完成订阅；剧集会按本次事件的集数更新订阅 note 和缺失集数。
 - `必须包含中文字幕` 默认开启。资源标题无法识别中文字幕或清晰度时会回落 MoviePilot 原流程。
 - 如果 HTML 页面里的磁链没有标题或链接文本，默认不会接受无标题结果，避免错转。确实可信时再打开 `允许无标题结果`。
