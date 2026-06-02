@@ -29,7 +29,7 @@ class MP115Cloud(_PluginBase):
     plugin_name = "115 云下载接管"
     plugin_desc = "订阅下载前搜索非公开搜索页，成功提交到 115 离线任务后拦截原下载，失败自动回落 MoviePilot 正常流程。"
     plugin_icon = ""
-    plugin_version = "1.0.8"
+    plugin_version = "1.0.9"
     plugin_author = "Codex"
     author_url = "https://github.com/jxxghp/MoviePilot-Plugins"
     plugin_config_prefix = "mp115cloud_"
@@ -458,7 +458,7 @@ class MP115Cloud(_PluginBase):
             if self._cancel_mp_download:
                 event_data.cancel = True
                 event_data.source = self.plugin_name
-                event_data.reason = "近期已提交同一订阅目标到 115，拦截重复下载"
+                event_data.reason = "该订阅目标已由 115 接管，拦截后续 MoviePilot 候选下载"
             return
         keyword = self._render_template(self._query_template, search_context).strip()
         if not keyword:
@@ -491,16 +491,20 @@ class MP115Cloud(_PluginBase):
             self._notify_message("115 云下载接管失败", f"{title}\n{submit_message}")
             return
 
-        logger.info(f"[MP115Cloud] 已提交 115 离线任务: {title}")
+        if self._dry_run:
+            logger.info(f"[MP115Cloud] 演练模式：未提交 115 离线任务: {title}")
+        else:
+            logger.info(f"[MP115Cloud] 已提交 115 离线任务: {title}")
         self._remember_recent_submission(self._submission_guard_store_keys(search_context, origin), search_context, selected)
         self._save_record(search_context, selected, submit_message, submit_result)
-        self._notify_message("115 云下载接管成功", f"{title}\n{submit_message}")
+        notify_title = "115 云下载接管演练" if self._dry_run else "115 云下载接管成功"
+        self._notify_message(notify_title, f"{title}\n{submit_message}")
         if self._mark_subscribe_done:
             self._update_subscribe_state(origin, context, event_data)
         if self._cancel_mp_download:
             event_data.cancel = True
             event_data.source = self.plugin_name
-            event_data.reason = "已提交到 115 离线任务，拦截 MoviePilot 原下载"
+            event_data.reason = "演练模式：未提交 115，拦截 MoviePilot 原下载" if self._dry_run else "已提交到 115 离线任务，拦截 MoviePilot 原下载"
 
     def _search_magnets(
         self,
@@ -1378,13 +1382,29 @@ class MP115Cloud(_PluginBase):
             return
         recent_logs[log_key] = now + self._recent_submit_log_ttl
         self._recent_submission_log_times = recent_logs
-        logger.info(f"[MP115Cloud] 近期已提交同一订阅目标，跳过重复提交: {search_context.get('title')}")
+        logger.info(f"[MP115Cloud] 订阅目标已由 115 接管，拦截后续 MoviePilot 候选下载: {search_context.get('title')}")
 
     def _recent_submission_log_key(self, search_context: Dict[str, Any], origin: str, keys: Any) -> str:
+        subscribe_id = self._subscribe_id_from_origin(origin)
+        target_season = self._target_season_number(search_context)
+        if subscribe_id:
+            parts = [f"subscribe:{subscribe_id}", self._media_type_text(search_context.get("media_type"))]
+            if target_season:
+                parts.append(f"season:{target_season}")
+            return self._normalize_title("|".join(item for item in parts if item))
+        parts = [
+            self._media_type_text(search_context.get("media_type")),
+            search_context.get("media_title") or search_context.get("search_title") or search_context.get("title"),
+            search_context.get("year"),
+        ]
+        if target_season:
+            parts.append(f"season:{target_season}")
+        key = self._normalize_title("|".join(str(item or "").strip() for item in parts if str(item or "").strip()))
+        if key:
+            return key
         if isinstance(keys, str):
-            keys = [keys]
-        key = self._first(*(keys or []))
-        return str(key or self._submission_guard_key(search_context, origin) or search_context.get("title") or "")
+            return keys
+        return str(self._first(*(keys or [])) or search_context.get("title") or "")
 
     def _notify_message(self, title: str, text: str):
         if not self._notify:
