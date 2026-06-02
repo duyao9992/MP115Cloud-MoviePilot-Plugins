@@ -25,12 +25,12 @@ class MP115Cloud(_PluginBase):
     plugin_name = "115 云下载接管"
     plugin_desc = "订阅下载前搜索非公开搜索页，成功提交到 115 离线任务后拦截原下载，失败自动回落 MoviePilot 正常流程。"
     plugin_icon = ""
-    plugin_version = "1.0.5"
+    plugin_version = "1.0.6"
     plugin_author = "Codex"
     author_url = "https://github.com/jxxghp/MoviePilot-Plugins"
     plugin_config_prefix = "mp115cloud_"
     plugin_order = 6
-    auth_level = 2
+    auth_level = 1
 
     _enabled = False
     _only_subscribe = True
