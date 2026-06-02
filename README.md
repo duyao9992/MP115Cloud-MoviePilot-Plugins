@@ -2,10 +2,14 @@
 
 这个插件用于 MoviePilot V2：当 MoviePilot 订阅命中资源并准备添加到下载器前，插件会先请求你配置的非公开搜索页；如果页面里有匹配的 `magnet:` 链接并且成功提交到 115 离线下载，就拦截 MoviePilot 原下载。搜索不到、匹配不达标、115 提交失败时，不做任何拦截，MoviePilot 会继续走原来的 PT/qBittorrent 流程。
 
+当前版本：`1.0.7`
+
 ## 文件结构
 
 ```text
+plugins/mp115cloud/__init__.py
 plugins.v2/mp115cloud/__init__.py
+package.json
 package.v2.json
 README.md
 ```
@@ -15,7 +19,9 @@ README.md
 推荐把本目录作为一个 GitHub 插件仓库发布，仓库根目录保持下面结构：
 
 ```text
+plugins/mp115cloud/__init__.py
 plugins.v2/mp115cloud/__init__.py
+package.json
 package.v2.json
 README.md
 ```
@@ -23,8 +29,10 @@ README.md
 发布到 GitHub `main` 分支后，在 MoviePilot V2 的插件市场设置里添加你的仓库地址，例如：
 
 ```text
-https://github.com/your-name/MP115Cloud-MoviePilot-Plugins
+https://github.com/duyao9992/MP115Cloud-MoviePilot-Plugins
 ```
+
+仓库地址不要带 `.git`，也不要填 `raw.githubusercontent.com` 链接。
 
 刷新插件市场后搜索 `115 云下载接管` 或 `MP115Cloud`，再从界面安装。这样后续升级只需要提交新版代码并同步 `package.v2.json` 和插件里的 `plugin_version`。
 
@@ -150,6 +158,8 @@ JSON 做种数字段路径: seeders
 从 `1.0.2` 起，电视剧资源年份不再作为硬拒绝条件。电视剧资源标题里的年份常常是目标季上映年份，而 MoviePilot 媒体年份可能是整部剧首播年份；电视剧会以目标季为硬条件继续筛选，电影仍保留年份冲突硬拒绝。
 
 从 `1.0.3` 起，同一订阅同一季整季包提交成功后，会按“订阅 ID + 季号”记录近期提交，不再依赖中文名、英文名、资源标题或年份；后续同季单集或资源标题事件会直接拦截，避免重复提交或回落 MoviePilot。
+
+从 `1.0.7` 起，兼容缺少 `app.helper.subscribe` 的 MoviePilot 版本；插件安装后不会再因为 `SubscribeHelper` 导入失败而无法显示在“已安装”。搜索、匹配、提交和拦截规则不变。
 
 相关配置：
 

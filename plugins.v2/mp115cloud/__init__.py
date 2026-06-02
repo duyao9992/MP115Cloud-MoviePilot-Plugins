@@ -15,17 +15,21 @@ from requests.cookies import RequestsCookieJar
 
 from app.core.event import Event, eventmanager
 from app.db.subscribe_oper import SubscribeOper
-from app.helper.subscribe import SubscribeHelper
 from app.log import logger
 from app.plugins import _PluginBase
 from app.schemas.types import ChainEventType, EventType, MediaType
+
+try:
+    from app.helper.subscribe import SubscribeHelper
+except ModuleNotFoundError:
+    SubscribeHelper = None
 
 
 class MP115Cloud(_PluginBase):
     plugin_name = "115 云下载接管"
     plugin_desc = "订阅下载前搜索非公开搜索页，成功提交到 115 离线任务后拦截原下载，失败自动回落 MoviePilot 正常流程。"
     plugin_icon = ""
-    plugin_version = "1.0.6"
+    plugin_version = "1.0.7"
     plugin_author = "Codex"
     author_url = "https://github.com/jxxghp/MoviePilot-Plugins"
     plugin_config_prefix = "mp115cloud_"
@@ -1201,10 +1205,11 @@ class MP115Cloud(_PluginBase):
                         "subscribe_info": latest.to_dict(),
                         "mediainfo": media.to_dict() if hasattr(media, "to_dict") else {},
                     })
-                    SubscribeHelper().sub_done_async({
-                        "tmdbid": getattr(media, "tmdb_id", None),
-                        "doubanid": getattr(media, "douban_id", None),
-                    })
+                    if SubscribeHelper:
+                        SubscribeHelper().sub_done_async({
+                            "tmdbid": getattr(media, "tmdb_id", None),
+                            "doubanid": getattr(media, "douban_id", None),
+                        })
                     logger.info(f"[MP115Cloud] 已更新订阅完成状态: {latest.name}")
         except Exception as exc:
             logger.warning(f"[MP115Cloud] 更新订阅状态失败: {exc}")
