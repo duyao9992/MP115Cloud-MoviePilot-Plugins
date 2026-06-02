@@ -29,7 +29,7 @@ class MP115Cloud(_PluginBase):
     plugin_name = "115 云下载接管"
     plugin_desc = "订阅下载前搜索非公开搜索页，成功提交到 115 离线任务后拦截原下载，失败自动回落 MoviePilot 正常流程。"
     plugin_icon = ""
-    plugin_version = "1.0.7"
+    plugin_version = "1.0.8"
     plugin_author = "Codex"
     author_url = "https://github.com/jxxghp/MoviePilot-Plugins"
     plugin_config_prefix = "mp115cloud_"
@@ -63,6 +63,7 @@ class MP115Cloud(_PluginBase):
     _detail_page_enabled = True
     _detail_max_pages = 5
     _recent_submit_ttl = 600
+    _recent_submit_log_ttl = 60
     _priority_keywords = ""
     _reject_keywords = ""
     _cookie = ""
@@ -453,7 +454,7 @@ class MP115Cloud(_PluginBase):
         search_context = self._build_search_context(event_data)
         submission_keys = self._submission_guard_lookup_keys(search_context, origin)
         if self._is_recent_submission(submission_keys):
-            logger.info(f"[MP115Cloud] 近期已提交同一订阅目标，跳过重复提交: {search_context.get('title')}")
+            self._log_recent_submission_skip(search_context, origin, submission_keys)
             if self._cancel_mp_download:
                 event_data.cancel = True
                 event_data.source = self.plugin_name
@@ -1360,6 +1361,30 @@ class MP115Cloud(_PluginBase):
         recent = loaded if isinstance(loaded, dict) else {}
         self._recent_submissions = dict(recent)
         return dict(recent)
+
+    def _log_recent_submission_skip(self, search_context: Dict[str, Any], origin: str, keys: Any):
+        log_key = self._recent_submission_log_key(search_context, origin, keys)
+        now = time.time()
+        recent_logs = getattr(self, "_recent_submission_log_times", None)
+        if not isinstance(recent_logs, dict):
+            recent_logs = {}
+        recent_logs = {
+            item_key: expires_at
+            for item_key, expires_at in recent_logs.items()
+            if self._to_float(expires_at, 0, 0, 9999999999) > now
+        }
+        if self._to_float(recent_logs.get(log_key), 0, 0, 9999999999) > now:
+            self._recent_submission_log_times = recent_logs
+            return
+        recent_logs[log_key] = now + self._recent_submit_log_ttl
+        self._recent_submission_log_times = recent_logs
+        logger.info(f"[MP115Cloud] 近期已提交同一订阅目标，跳过重复提交: {search_context.get('title')}")
+
+    def _recent_submission_log_key(self, search_context: Dict[str, Any], origin: str, keys: Any) -> str:
+        if isinstance(keys, str):
+            keys = [keys]
+        key = self._first(*(keys or []))
+        return str(key or self._submission_guard_key(search_context, origin) or search_context.get("title") or "")
 
     def _notify_message(self, title: str, text: str):
         if not self._notify:

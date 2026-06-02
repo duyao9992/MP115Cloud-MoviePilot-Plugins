@@ -3,11 +3,12 @@
     "name": "115 云下载接管",
     "description": "订阅下载前搜索非公开搜索页，成功提交到 115 离线任务后拦截原下载，失败自动回落 MoviePilot 正常流程。",
     "labels": "订阅,下载管理,115",
-    "version": "1.0.7",
+    "version": "1.0.8",
     "author": "Codex",
     "level": 1,
     "v2": true,
     "history": {
+      "v1.0.8": "重复提交拦截日志降噪：MoviePilot 同一订阅瞬间触发多个候选事件时，仍逐个拦截重复下载，但同一目标 60 秒内只打印一次“近期已提交”日志；不改变搜索、匹配、提交和拦截逻辑。",
       "v1.0.7": "兼容缺少 app.helper.subscribe 的 MoviePilot 版本：SubscribeHelper 改为可选导入，避免在线安装后插件源码已下载但加载失败、已安装列表不显示；不改变搜索、匹配、提交和拦截逻辑。",
       "v1.0.6": "降低插件可见等级到 level/auth_level=1：避免部分 MoviePilot 环境因站点认证等级判断把已下载插件从已安装列表中过滤掉；不改变搜索、匹配、提交和拦截逻辑。",
       "v1.0.5": "补充 package.json 在线市场索引文件：兼容当前 MoviePilot 市场读取 package.json 的逻辑，并保留 package.v2.json；配合 plugins/mp115cloud 目录，确保在线市场显示、安装和已安装列表一致。",
