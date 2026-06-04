@@ -20,7 +20,8 @@
 
 ## 必填
 
-- TMDb Read Access Token。
+- TMDb Read Access Token。需要填写 TMDb 后台的 `API Read Access Token`，不是普通 API Key；可填写完整 `Bearer eyJ...`，也可只填写 `eyJ...`。
+- 填写 Token 后保存配置，再打开 `立即推荐一次`。执行结果会显示在插件数据页。
 
 ## 建议配置
 

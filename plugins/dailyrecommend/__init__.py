@@ -22,7 +22,7 @@ class DailyRecommend(_PluginBase):
     plugin_name = "每日推荐"
     plugin_desc = "根据偏好每天推荐一部电影或电视剧，微信回复 1 订阅、2 换一部、3 今日跳过。"
     plugin_icon = "Moviepilot_A.png"
-    plugin_version = "0.1.0"
+    plugin_version = "0.1.1"
     plugin_author = "heiyingsky"
     author_url = "https://github.com/heiyingsky"
     plugin_config_prefix = "dailyrecommend_"
@@ -376,7 +376,26 @@ class DailyRecommend(_PluginBase):
     def get_page(self) -> List[dict]:
         active = self.get_data("active") or {}
         history = self.get_data("history") or []
+        last_result = self.get_data("last_result") or {}
         content = []
+        if not self._tmdb_token:
+            content.append({
+                "component": "VAlert",
+                "props": {
+                    "type": "warning",
+                    "variant": "tonal",
+                    "text": "未配置 TMDb Read Access Token，无法生成推荐。填写 Token 后保存配置，再打开“立即推荐一次”。"
+                }
+            })
+        if last_result:
+            content.append({
+                "component": "VAlert",
+                "props": {
+                    "type": "success" if last_result.get("success") else "error",
+                    "variant": "tonal",
+                    "text": f"最近执行：{last_result.get('time') or '-'}，{last_result.get('message') or '-'}"
+                }
+            })
         if active:
             content.append({
                 "component": "VAlert",
@@ -415,6 +434,7 @@ class DailyRecommend(_PluginBase):
         if not self._tmdb_token:
             message = "每日推荐未配置 TMDb Read Access Token"
             logger.error(message)
+            self.__save_last_result(False, message)
             self.__post(title="每日推荐配置缺失", text=message, channel=channel, userid=userid)
             return {"success": False, "message": message}
 
@@ -423,15 +443,25 @@ class DailyRecommend(_PluginBase):
             active = self.get_data("active") or {}
             if active.get("date") == today:
                 logger.info("今日已推荐，跳过重复推送")
+                self.__save_last_result(True, "今日已推荐")
                 return {"success": True, "message": "今日已推荐"}
             if self.get_data("skip_date") == today:
                 logger.info("今日已跳过推荐")
+                self.__save_last_result(True, "今日已跳过")
                 return {"success": True, "message": "今日已跳过"}
 
-        candidate = self.__pick_candidate(exclude_key=exclude_key)
+        try:
+            candidate = self.__pick_candidate(exclude_key=exclude_key)
+        except Exception as err:
+            message = f"每日推荐执行失败：{err}"
+            logger.error(message)
+            self.__save_last_result(False, message)
+            self.__post(title="每日推荐执行失败", text=message, channel=channel, userid=userid)
+            return {"success": False, "message": message}
         if not candidate:
             message = "没有找到符合条件的新推荐"
             logger.warn(message)
+            self.__save_last_result(False, message)
             self.__post(title="每日推荐", text=message, channel=channel, userid=userid)
             return {"success": False, "message": message}
 
@@ -443,7 +473,9 @@ class DailyRecommend(_PluginBase):
         self.save_data("active", active)
         self.__append_history(active, "recommended")
         self.__post_recommendation(active, channel=channel, userid=userid)
-        return {"success": True, "data": active}
+        message = f"已生成推荐：{active.get('title')}"
+        self.__save_last_result(True, message)
+        return {"success": True, "message": message, "data": active}
 
     @eventmanager.register(EventType.UserMessage)
     def on_user_message(self, event: Event):
@@ -725,6 +757,13 @@ class DailyRecommend(_PluginBase):
         if len(history) > self._history_limit:
             history = history[-self._history_limit:]
         self.save_data("history", history)
+
+    def __save_last_result(self, success: bool, message: str):
+        self.save_data("last_result", {
+            "success": bool(success),
+            "message": message,
+            "time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        })
 
     def __update_config(self):
         self.update_config({
