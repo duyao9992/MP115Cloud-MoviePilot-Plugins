@@ -4,13 +4,15 @@
 
 当前版本：`1.0.9`
 
-同一仓库还提供 `MP115guanying`（高端玩家115云下载接管），可在 MoviePilot 插件市场中搜索安装。
+同一仓库还提供 `MP115guanying`（高端玩家115云下载接管）和 `DailyRecommend`（每日推荐），可在 MoviePilot 插件市场中搜索安装。
 
 ## 文件结构
 
 ```text
 plugins/mp115cloud/__init__.py
+plugins/dailyrecommend/__init__.py
 plugins.v2/mp115cloud/__init__.py
+plugins.v2/dailyrecommend/__init__.py
 package.json
 package.v2.json
 README.md
@@ -22,7 +24,9 @@ README.md
 
 ```text
 plugins/mp115cloud/__init__.py
+plugins/dailyrecommend/__init__.py
 plugins.v2/mp115cloud/__init__.py
+plugins.v2/dailyrecommend/__init__.py
 package.json
 package.v2.json
 README.md
@@ -36,7 +40,7 @@ https://github.com/duyao9992/MP115Cloud-MoviePilot-Plugins
 
 仓库地址不要带 `.git`，也不要填 `raw.githubusercontent.com` 链接。
 
-刷新插件市场后搜索 `115 云下载接管` 或 `MP115Cloud`，再从界面安装。这样后续升级只需要提交新版代码并同步 `package.v2.json` 和插件里的 `plugin_version`。
+刷新插件市场后搜索 `115 云下载接管`、`MP115Cloud`、`每日推荐` 或 `DailyRecommend`，再从界面安装。这样后续升级只需要提交新版代码并同步 `package.json`、`package.v2.json` 和插件里的 `plugin_version`。
 
 ## 手动安装
 
