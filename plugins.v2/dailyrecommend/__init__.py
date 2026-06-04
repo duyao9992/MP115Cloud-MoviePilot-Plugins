@@ -22,7 +22,7 @@ class DailyRecommend(_PluginBase):
     plugin_name = "每日推荐"
     plugin_desc = "根据偏好每天推荐一部电影或电视剧，微信回复 1 订阅、2 换一部、3 今日跳过。"
     plugin_icon = "Moviepilot_A.png"
-    plugin_version = "0.1.3"
+    plugin_version = "0.1.5"
     plugin_author = "heiyingsky"
     author_url = "https://github.com/heiyingsky"
     plugin_config_prefix = "dailyrecommend_"
@@ -33,6 +33,7 @@ class DailyRecommend(_PluginBase):
     _onlyonce = False
     _proxy = False
     _cron = "0 9 * * *"
+    _recommend_hour = 9
     _tmdb_token = ""
     _media_type = "mixed"
     _language_pref = "any"
@@ -114,7 +115,8 @@ class DailyRecommend(_PluginBase):
             self._enabled = bool(config.get("enabled"))
             self._onlyonce = bool(config.get("onlyonce"))
             self._proxy = bool(config.get("proxy"))
-            self._cron = config.get("cron") or "0 9 * * *"
+            self._recommend_hour = self.__parse_recommend_hour(config)
+            self._cron = f"0 {self._recommend_hour} * * *"
             self._tmdb_token = (config.get("tmdb_token") or "").strip()
             self._media_type = config.get("media_type") or "mixed"
             self._language_pref = config.get("language_pref") or "any"
@@ -142,7 +144,36 @@ class DailyRecommend(_PluginBase):
 
     @staticmethod
     def get_command() -> List[Dict[str, Any]]:
-        return []
+        return [
+            {
+                "cmd": "/dailyrecommend_subscribe",
+                "event": EventType.PluginAction,
+                "desc": "订阅当前每日推荐",
+                "category": "每日推荐",
+                "data": {"action": "dailyrecommend_subscribe"}
+            },
+            {
+                "cmd": "/dailyrecommend_change",
+                "event": EventType.PluginAction,
+                "desc": "换一部每日推荐",
+                "category": "每日推荐",
+                "data": {"action": "dailyrecommend_change"}
+            },
+            {
+                "cmd": "/dailyrecommend_skip",
+                "event": EventType.PluginAction,
+                "desc": "今日跳过每日推荐",
+                "category": "每日推荐",
+                "data": {"action": "dailyrecommend_skip"}
+            },
+            {
+                "cmd": "/dailyrecommend_run",
+                "event": EventType.PluginAction,
+                "desc": "立即生成每日推荐",
+                "category": "每日推荐",
+                "data": {"action": "dailyrecommend_run"}
+            }
+        ]
 
     def get_api(self) -> List[Dict[str, Any]]:
         return [
@@ -209,8 +240,15 @@ class DailyRecommend(_PluginBase):
                                 "component": "VCol",
                                 "props": {"cols": 12, "md": 3},
                                 "content": [{
-                                    "component": "VTextField",
-                                    "props": {"model": "cron", "label": "推荐时间", "placeholder": "0 9 * * *"}
+                                    "component": "VSelect",
+                                    "props": {
+                                        "model": "recommend_hour",
+                                        "label": "推荐小时",
+                                        "items": [
+                                            {"title": f"{hour:02d}:00", "value": hour}
+                                            for hour in range(24)
+                                        ]
+                                    }
                                 }]
                             }
                         ]
@@ -377,6 +415,7 @@ class DailyRecommend(_PluginBase):
             "onlyonce": False,
             "proxy": False,
             "cron": "0 9 * * *",
+            "recommend_hour": 9,
             "tmdb_token": "",
             "media_type": "mixed",
             "language_pref": "any",
@@ -525,24 +564,77 @@ class DailyRecommend(_PluginBase):
         if text not in {"1", "2", "3", "订阅", "换一部", "今日跳过", "跳过"}:
             return
 
+        logger.info(f"每日推荐收到用户回复：text={text}, event_data={event_data}")
         active = self.get_data("active") or {}
         if not active:
+            logger.info("每日推荐收到用户回复，但当前没有 active 推荐，忽略")
             return
 
         channel = event_data.get("channel")
-        userid = event_data.get("user")
+        userid = event_data.get("userid") or event_data.get("user")
 
         if text in {"1", "订阅"}:
-            self.__subscribe_active(active, channel=channel, userid=userid)
+            self.__handle_action("subscribe", active=active, channel=channel, userid=userid)
         elif text in {"2", "换一部"}:
-            self.__append_history(active, "changed")
-            self.save_data("active", {})
-            self.recommend(force=True, channel=channel, userid=userid, exclude_key=active.get("key"))
+            self.__handle_action("change", active=active, channel=channel, userid=userid)
         elif text in {"3", "今日跳过", "跳过"}:
-            self.__append_history(active, "skipped")
-            self.save_data("active", {})
-            self.save_data("skip_date", self.__today())
-            self.__post(title="今日推荐已跳过", text="明天会继续按你的偏好推荐。", channel=channel, userid=userid)
+            self.__handle_action("skip", active=active, channel=channel, userid=userid)
+
+    @eventmanager.register(EventType.PluginAction)
+    def on_plugin_action(self, event: Event):
+        if not self._enabled or not event:
+            return
+        event_data = event.event_data or {}
+        action = event_data.get("action")
+        if action not in {
+            "dailyrecommend_subscribe",
+            "dailyrecommend_change",
+            "dailyrecommend_skip",
+            "dailyrecommend_run"
+        }:
+            return
+
+        channel = event_data.get("channel")
+        userid = event_data.get("userid") or event_data.get("user")
+        logger.info(f"每日推荐收到远程命令：action={action}, event_data={event_data}")
+
+        if action == "dailyrecommend_run":
+            self.recommend(force=True, channel=channel, userid=userid)
+            return
+
+        active = self.get_data("active") or {}
+        if not active:
+            logger.info("每日推荐收到远程命令，但当前没有 active 推荐")
+            self.__post(title="每日推荐", text="当前没有可操作的推荐，请先执行 /dailyrecommend_run。", channel=channel, userid=userid)
+            return
+
+        if action == "dailyrecommend_subscribe":
+            self.__handle_action("subscribe", active=active, channel=channel, userid=userid)
+        elif action == "dailyrecommend_change":
+            self.__handle_action("change", active=active, channel=channel, userid=userid)
+        elif action == "dailyrecommend_skip":
+            self.__handle_action("skip", active=active, channel=channel, userid=userid)
+
+    @eventmanager.register(EventType.MessageAction)
+    def on_message_action(self, event: Event):
+        if not self._enabled or not event:
+            return
+        event_data = event.event_data or {}
+        plugin_id = event_data.get("plugin_id")
+        if plugin_id and plugin_id != self.__class__.__name__:
+            return
+        text = str(event_data.get("text") or "").strip()
+        if text not in {"subscribe", "change", "skip"}:
+            return
+
+        active = self.get_data("active") or {}
+        if not active:
+            logger.info("每日推荐收到按钮回调，但当前没有 active 推荐")
+            return
+        channel = event_data.get("channel")
+        userid = event_data.get("userid") or event_data.get("user")
+        logger.info(f"每日推荐收到按钮回调：text={text}, event_data={event_data}")
+        self.__handle_action(text, active=active, channel=channel, userid=userid)
 
     def __pick_candidate(self, exclude_key: Optional[str] = None) -> Optional[Dict[str, Any]]:
         media_types = self.__media_types_for_today()
@@ -713,16 +805,22 @@ class DailyRecommend(_PluginBase):
         if active.get("year"):
             meta.year = active.get("year")
 
+        logger.info(
+            f"每日推荐开始订阅：title={active.get('title')}, year={active.get('year')}, "
+            f"type={active.get('media_type')}, tmdb={active.get('tmdbid')}, channel={channel or '默认'}, userid={userid or '-'}"
+        )
         try:
             mediainfo = self.chain.recognize_media(meta=meta, tmdbid=active.get("tmdbid"), mtype=media_type)
         except TypeError:
             mediainfo = self.chain.recognize_media(meta=meta, tmdbid=active.get("tmdbid"))
 
         if not mediainfo:
+            logger.warn(f"每日推荐订阅失败：{active.get('title')} 未识别到媒体信息")
             self.__post(title="订阅失败", text=f"{active.get('title')} 未识别到媒体信息。", channel=channel, userid=userid)
             return
 
         if SubscribeChain().exists(mediainfo=mediainfo, meta=meta):
+            logger.info(f"每日推荐订阅已存在：{mediainfo.title_year}")
             self.__append_history(active, "already_subscribed")
             self.save_data("active", {})
             self.__post(title="订阅已存在", text=f"{mediainfo.title_year} 已在订阅列表中。", channel=channel, userid=userid)
@@ -738,10 +836,12 @@ class DailyRecommend(_PluginBase):
             username="每日推荐"
         )
         if sid:
+            logger.info(f"每日推荐订阅成功：{mediainfo.title_year}, sid={sid}, message={message}")
             self.__append_history(active, "subscribed")
             self.save_data("active", {})
             self.__post(title="已加入订阅", text=f"{mediainfo.title_year}\n结果：{message}", channel=channel, userid=userid)
         else:
+            logger.warn(f"每日推荐订阅失败：{mediainfo.title_year}, message={message}")
             self.__post(title="订阅失败", text=f"{mediainfo.title_year}\n原因：{message}", channel=channel, userid=userid)
 
     def __post_recommendation(self, item: Dict[str, Any], channel: Any = None, userid: Any = None):
@@ -754,13 +854,52 @@ class DailyRecommend(_PluginBase):
             f"评分：{item.get('vote') or '-'} / 投票：{item.get('vote_count') or '-'}",
             f"简介：{self.__short_overview(item.get('overview'))}",
             "",
-            "回复 1：订阅",
-            "回复 2：换一部",
-            "回复 3：今日跳过"
+            "回复 1 或 /dailyrecommend_subscribe：订阅",
+            "回复 2 或 /dailyrecommend_change：换一部",
+            "回复 3 或 /dailyrecommend_skip：今日跳过"
         ]
-        self.__post(title=title, text="\n".join(lines), image=item.get("poster"), channel=channel, userid=userid)
+        buttons = [
+            [
+                {"text": "订阅", "callback_data": f"[PLUGIN]{self.__class__.__name__}|subscribe"},
+                {"text": "换一部", "callback_data": f"[PLUGIN]{self.__class__.__name__}|change"},
+                {"text": "跳过", "callback_data": f"[PLUGIN]{self.__class__.__name__}|skip"}
+            ]
+        ]
+        self.__post(
+            title=title,
+            text="\n".join(lines),
+            image=item.get("poster"),
+            channel=channel,
+            userid=userid,
+            buttons=buttons
+        )
 
-    def __post(self, title: str, text: str = "", image: Optional[str] = None, channel: Any = None, userid: Any = None):
+    def __handle_action(self, action: str, active: Dict[str, Any], channel: Any = None, userid: Any = None):
+        logger.info(
+            f"每日推荐处理动作：action={action}, title={active.get('title')}, "
+            f"channel={channel or '默认'}, userid={userid or '-'}"
+        )
+        if action == "subscribe":
+            self.__subscribe_active(active, channel=channel, userid=userid)
+        elif action == "change":
+            self.__append_history(active, "changed")
+            self.save_data("active", {})
+            self.recommend(force=True, channel=channel, userid=userid, exclude_key=active.get("key"))
+        elif action == "skip":
+            self.__append_history(active, "skipped")
+            self.save_data("active", {})
+            self.save_data("skip_date", self.__today())
+            self.__post(title="今日推荐已跳过", text="明天会继续按你的偏好推荐。", channel=channel, userid=userid)
+
+    def __post(
+        self,
+        title: str,
+        text: str = "",
+        image: Optional[str] = None,
+        channel: Any = None,
+        userid: Any = None,
+        buttons: Optional[List[Any]] = None
+    ):
         mtype = self.__notification_type()
         kwargs = {
             "mtype": mtype,
@@ -773,6 +912,8 @@ class DailyRecommend(_PluginBase):
             kwargs["channel"] = channel
         if userid:
             kwargs["userid"] = userid
+        if buttons:
+            kwargs["buttons"] = buttons
         try:
             logger.info(
                 f"每日推荐发送通知：type={getattr(mtype, 'value', mtype)}, "
@@ -897,6 +1038,7 @@ class DailyRecommend(_PluginBase):
             "onlyonce": self._onlyonce,
             "proxy": self._proxy,
             "cron": self._cron,
+            "recommend_hour": self._recommend_hour,
             "tmdb_token": self._tmdb_token,
             "media_type": self._media_type,
             "language_pref": self._language_pref,
@@ -934,6 +1076,15 @@ class DailyRecommend(_PluginBase):
             return int(str(value or "")[:4])
         except Exception:
             return None
+
+    def __parse_recommend_hour(self, config: dict) -> int:
+        if config.get("recommend_hour") not in (None, ""):
+            return max(0, min(self.__safe_int(config.get("recommend_hour"), 9), 23))
+        cron = str(config.get("cron") or "").strip()
+        parts = cron.split()
+        if len(parts) >= 2:
+            return max(0, min(self.__safe_int(parts[1], 9), 23))
+        return 9
 
     @staticmethod
     def __today() -> str:
