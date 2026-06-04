@@ -21,9 +21,9 @@ from app.utils.http import RequestUtils
 
 class DailyRecommend(_PluginBase):
     plugin_name = "每日推荐"
-    plugin_desc = "根据偏好每天推荐一部电影或电视剧，微信回复订阅、换、跳过。"
+    plugin_desc = "根据偏好每天推荐一部电影或电视剧，微信回复要、换、跳。"
     plugin_icon = "Moviepilot_A.png"
-    plugin_version = "0.1.8"
+    plugin_version = "0.1.9"
     plugin_author = "heiyingsky"
     author_url = "https://github.com/heiyingsky"
     plugin_config_prefix = "dailyrecommend_"
@@ -471,7 +471,7 @@ class DailyRecommend(_PluginBase):
                 "props": {
                     "type": "success",
                     "variant": "tonal",
-                    "text": f"当前推荐：{active.get('title')}，微信回复：订阅 / 换 / 跳过。"
+                    "text": f"当前推荐：{active.get('title')}，微信回复：要 / 换 / 跳。"
                 }
             })
         content.append({
@@ -887,7 +887,7 @@ class DailyRecommend(_PluginBase):
             f"主演：{self.__cast_text(item.get('cast'))}",
             f"简介：{self.__core_overview(item.get('overview'))}",
             "",
-            "回复：订阅 / 换 / 跳过"
+            "回复：要 / 换 / 跳"
         ]
         buttons = [
             [
@@ -1187,7 +1187,7 @@ class DailyRecommend(_PluginBase):
             return None
         value = value.translate(str.maketrans({"１": "1", "２": "2", "３": "3"}))
         lower = value.lower().strip()
-        if lower.startswith("/dailyrecommend_subscribe") or lower in {"1", "订阅", "加入订阅", "subscribe"}:
+        if lower.startswith("/dailyrecommend_subscribe") or lower in {"1", "要", "要了", "收", "收下", "订", "订阅", "加入订阅", "subscribe"}:
             return "subscribe"
         if lower.startswith("/dailyrecommend_change") or lower in {"2", "换", "换一部", "换一个", "换部", "下一部", "再来", "change"}:
             return "change"
