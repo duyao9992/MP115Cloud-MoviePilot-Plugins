@@ -5,9 +5,9 @@
 ## 菜单
 
 ```text
-回复 1 或 /dailyrecommend_subscribe：订阅
-回复 2 或 /dailyrecommend_change：换一部
-回复 3 或 /dailyrecommend_skip：今日跳过
+回复 1：订阅
+回复 2：换一部
+回复 3：今日跳过
 ```
 
 ## 推荐逻辑
@@ -17,6 +17,8 @@
 - 可排除 MoviePilot 已订阅内容。
 - 可排除 MoviePilot 已入库内容。
 - 不自动下载，只在你回复 `1` 后创建 MoviePilot 订阅。
+- 推荐卡片会显示主演，简介会尽量保留剧情核心内容。
+- 回复 `2` 会强制换一部：优先按当前规则筛选，必要时自动扩大候选范围并继续排除当前这部。
 
 ## 必填
 

@@ -1,6 +1,7 @@
 import datetime
 import math
 import random
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from apscheduler.triggers.cron import CronTrigger
@@ -22,7 +23,7 @@ class DailyRecommend(_PluginBase):
     plugin_name = "每日推荐"
     plugin_desc = "根据偏好每天推荐一部电影或电视剧，微信回复 1 订阅、2 换一部、3 今日跳过。"
     plugin_icon = "Moviepilot_A.png"
-    plugin_version = "0.1.5"
+    plugin_version = "0.1.6"
     plugin_author = "heiyingsky"
     author_url = "https://github.com/heiyingsky"
     plugin_config_prefix = "dailyrecommend_"
@@ -560,11 +561,12 @@ class DailyRecommend(_PluginBase):
         if not self._enabled or not event:
             return
         event_data = event.event_data or {}
-        text = str(event_data.get("text") or "").strip()
-        if text not in {"1", "2", "3", "订阅", "换一部", "今日跳过", "跳过"}:
+        text = self.__extract_event_text(event_data)
+        action = self.__action_from_text(text)
+        if not action:
             return
 
-        logger.info(f"每日推荐收到用户回复：text={text}, event_data={event_data}")
+        logger.info(f"每日推荐收到用户回复：text={text}, action={action}, event_data={event_data}")
         active = self.get_data("active") or {}
         if not active:
             logger.info("每日推荐收到用户回复，但当前没有 active 推荐，忽略")
@@ -573,12 +575,7 @@ class DailyRecommend(_PluginBase):
         channel = event_data.get("channel")
         userid = event_data.get("userid") or event_data.get("user")
 
-        if text in {"1", "订阅"}:
-            self.__handle_action("subscribe", active=active, channel=channel, userid=userid)
-        elif text in {"2", "换一部"}:
-            self.__handle_action("change", active=active, channel=channel, userid=userid)
-        elif text in {"3", "今日跳过", "跳过"}:
-            self.__handle_action("skip", active=active, channel=channel, userid=userid)
+        self.__handle_action(action, active=active, channel=channel, userid=userid)
 
     @eventmanager.register(EventType.PluginAction)
     def on_plugin_action(self, event: Event):
@@ -623,8 +620,9 @@ class DailyRecommend(_PluginBase):
         plugin_id = event_data.get("plugin_id")
         if plugin_id and plugin_id != self.__class__.__name__:
             return
-        text = str(event_data.get("text") or "").strip()
-        if text not in {"subscribe", "change", "skip"}:
+        text = self.__extract_event_text(event_data)
+        action = self.__action_from_text(text)
+        if action not in {"subscribe", "change", "skip"}:
             return
 
         active = self.get_data("active") or {}
@@ -633,18 +631,23 @@ class DailyRecommend(_PluginBase):
             return
         channel = event_data.get("channel")
         userid = event_data.get("userid") or event_data.get("user")
-        logger.info(f"每日推荐收到按钮回调：text={text}, event_data={event_data}")
-        self.__handle_action(text, active=active, channel=channel, userid=userid)
+        logger.info(f"每日推荐收到按钮回调：text={text}, action={action}, event_data={event_data}")
+        self.__handle_action(action, active=active, channel=channel, userid=userid)
 
-    def __pick_candidate(self, exclude_key: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    def __pick_candidate(
+        self,
+        exclude_key: Optional[str] = None,
+        ignore_history: bool = False,
+        max_pages: Optional[int] = None
+    ) -> Optional[Dict[str, Any]]:
         media_types = self.__media_types_for_today()
-        history_keys = self.__history_keys() if self._exclude_recommended else set()
+        history_keys = set() if ignore_history else (self.__history_keys() if self._exclude_recommended else set())
         if exclude_key:
             history_keys.add(exclude_key)
 
         logger.info(f"每日推荐候选类型顺序：{media_types}")
         for media_type in media_types:
-            candidates = self.__discover(media_type)
+            candidates = self.__discover(media_type, max_pages=max_pages)
             logger.info(f"每日推荐 {media_type} 候选数量：{len(candidates)}")
             for item in candidates:
                 key = f"{media_type}:{item.get('id')}"
@@ -664,14 +667,16 @@ class DailyRecommend(_PluginBase):
                     f"每日推荐命中候选：{candidate.get('title')} "
                     f"({candidate.get('year') or '-'}) tmdb={candidate.get('tmdbid')}"
                 )
+                self.__enrich_candidate(candidate)
                 return candidate
         return None
 
-    def __discover(self, media_type: str) -> List[dict]:
+    def __discover(self, media_type: str, max_pages: Optional[int] = None) -> List[dict]:
         endpoint = "/discover/movie" if media_type == "movie" else "/discover/tv"
         candidates = []
         seen = set()
-        for page in range(1, self._max_pages + 1):
+        page_limit = max(1, min(self.__safe_int(max_pages, self._max_pages), 20))
+        for page in range(1, page_limit + 1):
             params = self.__discover_params(media_type, page)
             logger.info(f"每日推荐请求 TMDb：type={media_type}, page={page}")
             data = self.__tmdb_get(endpoint, params)
@@ -753,6 +758,7 @@ class DailyRecommend(_PluginBase):
             "year": year,
             "date": date_value,
             "overview": item.get("overview") or "",
+            "cast": [],
             "vote": item.get("vote_average"),
             "vote_count": item.get("vote_count"),
             "popularity": item.get("popularity"),
@@ -760,6 +766,32 @@ class DailyRecommend(_PluginBase):
             "poster": self.__image_url(item.get("poster_path")),
             "original_language": item.get("original_language")
         }
+
+    def __enrich_candidate(self, candidate: Dict[str, Any]):
+        tmdbid = candidate.get("tmdbid")
+        if not tmdbid:
+            return
+        path = f"/movie/{tmdbid}" if candidate.get("media_type") == "movie" else f"/tv/{tmdbid}"
+        try:
+            detail = self.__tmdb_get(path, {
+                "language": self._language,
+                "append_to_response": "credits"
+            })
+        except Exception as err:
+            logger.warn(f"每日推荐详情补充失败：{candidate.get('title')} - {err}")
+            return
+
+        if detail.get("overview"):
+            candidate["overview"] = detail.get("overview")
+
+        cast_names = []
+        for person in ((detail.get("credits") or {}).get("cast") or []):
+            name = person.get("name") or person.get("original_name")
+            if name and name not in cast_names:
+                cast_names.append(name)
+            if len(cast_names) >= 3:
+                break
+        candidate["cast"] = cast_names
 
     def __should_skip_by_moviepilot(self, candidate: Dict[str, Any]) -> bool:
         meta = MetaInfo(candidate.get("title"))
@@ -852,11 +884,12 @@ class DailyRecommend(_PluginBase):
             f"类型：{mtype}",
             f"年份：{item.get('year') or '-'}",
             f"评分：{item.get('vote') or '-'} / 投票：{item.get('vote_count') or '-'}",
-            f"简介：{self.__short_overview(item.get('overview'))}",
+            f"主演：{self.__cast_text(item.get('cast'))}",
+            f"简介：{self.__core_overview(item.get('overview'))}",
             "",
-            "回复 1 或 /dailyrecommend_subscribe：订阅",
-            "回复 2 或 /dailyrecommend_change：换一部",
-            "回复 3 或 /dailyrecommend_skip：今日跳过"
+            "回复 1：订阅",
+            "回复 2：换一部",
+            "回复 3：今日跳过"
         ]
         buttons = [
             [
@@ -882,14 +915,53 @@ class DailyRecommend(_PluginBase):
         if action == "subscribe":
             self.__subscribe_active(active, channel=channel, userid=userid)
         elif action == "change":
-            self.__append_history(active, "changed")
-            self.save_data("active", {})
-            self.recommend(force=True, channel=channel, userid=userid, exclude_key=active.get("key"))
+            self.__change_active(active, channel=channel, userid=userid)
         elif action == "skip":
             self.__append_history(active, "skipped")
             self.save_data("active", {})
             self.save_data("skip_date", self.__today())
             self.__post(title="今日推荐已跳过", text="明天会继续按你的偏好推荐。", channel=channel, userid=userid)
+
+    def __change_active(self, active: Dict[str, Any], channel: Any = None, userid: Any = None):
+        self.__append_history(active, "changed")
+        old_key = active.get("key")
+        today = self.__today()
+        attempts = [
+            {"ignore_history": False, "max_pages": self._max_pages},
+            {"ignore_history": True, "max_pages": self._max_pages},
+            {"ignore_history": True, "max_pages": max(self._max_pages, 10)},
+            {"ignore_history": True, "max_pages": 20}
+        ]
+
+        for attempt in attempts:
+            try:
+                candidate = self.__pick_candidate(
+                    exclude_key=old_key,
+                    ignore_history=attempt["ignore_history"],
+                    max_pages=attempt["max_pages"]
+                )
+            except Exception as err:
+                logger.error(f"每日推荐换一部执行失败：{err}")
+                self.__save_last_result(False, f"换一部执行失败：{err}")
+                self.save_data("active", active)
+                return
+            if not candidate:
+                continue
+
+            new_active = {
+                **candidate,
+                "date": today,
+                "time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
+            self.save_data("active", new_active)
+            self.__append_history(new_active, "recommended")
+            self.__post_recommendation(new_active, channel=channel, userid=userid)
+            self.__save_last_result(True, f"已换一部推荐：{new_active.get('title')}")
+            return
+
+        logger.warn("每日推荐换一部未找到可替换候选，保留当前推荐")
+        self.save_data("active", active)
+        self.__save_last_result(True, "换一部未找到可替换候选，已保留当前推荐")
 
     def __post(
         self,
@@ -1095,6 +1167,68 @@ class DailyRecommend(_PluginBase):
         if not path:
             return None
         return f"https://image.tmdb.org/t/p/w500{path}"
+
+    @classmethod
+    def __extract_event_text(cls, event_data: Any) -> str:
+        if not isinstance(event_data, dict):
+            return str(event_data or "").strip()
+        for key in ("text", "content", "message", "msg", "body", "value", "command"):
+            value = event_data.get(key)
+            if isinstance(value, dict):
+                nested = cls.__extract_event_text(value)
+                if nested:
+                    return nested
+            elif value not in (None, ""):
+                return str(value).strip()
+        return ""
+
+    @staticmethod
+    def __action_from_text(text: Optional[str]) -> Optional[str]:
+        value = str(text or "").strip()
+        if not value:
+            return None
+        value = value.translate(str.maketrans({"１": "1", "２": "2", "３": "3"}))
+        lower = value.lower().strip()
+        if lower.startswith("/dailyrecommend_subscribe") or lower in {"1", "订阅", "subscribe"}:
+            return "subscribe"
+        if lower.startswith("/dailyrecommend_change") or lower in {"2", "换一部", "换一个", "换部", "change"}:
+            return "change"
+        if lower.startswith("/dailyrecommend_skip") or lower in {"3", "今日跳过", "跳过", "skip"}:
+            return "skip"
+
+        match = re.match(r"^(?:回复\s*)?([123])(?:\s|$|[：:，,。.！!])", value)
+        if not match:
+            return None
+        return {"1": "subscribe", "2": "change", "3": "skip"}.get(match.group(1))
+
+    @staticmethod
+    def __cast_text(value: Any) -> str:
+        if not value:
+            return "-"
+        if isinstance(value, str):
+            return value
+        names = [str(item).strip() for item in value if str(item).strip()]
+        return " / ".join(names[:3]) if names else "-"
+
+    @classmethod
+    def __core_overview(cls, value: Optional[str], limit: int = 110) -> str:
+        text = " ".join(str(value or "").split())
+        if not text:
+            return "暂无简介。"
+
+        production_terms = ("执笔", "导演", "编剧", "制片", "制作", "出品", "主演", "预订成剧", "Netflix", "HBO", "ABC")
+        plot_terms = ("讲述", "讲的是", "故事", "围绕", "聚焦", "跟随", "描绘", "记录", "发生在", "主角", "主人公")
+        for term in plot_terms:
+            index = text.find(term)
+            if index > 0 and (index > 18 or any(word in text[:index] for word in production_terms)):
+                text = text[index:]
+                break
+
+        parts = [part.strip() for part in re.split(r"(?<=[。！？!?])", text) if part.strip()]
+        if len(parts) > 1 and any(word in parts[0] for word in production_terms) and not any(word in parts[0] for word in plot_terms):
+            text = "".join(parts[1:]) or text
+
+        return cls.__short_overview(text, limit=limit)
 
     @staticmethod
     def __short_overview(value: Optional[str], limit: int = 90) -> str:
