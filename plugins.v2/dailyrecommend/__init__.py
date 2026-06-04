@@ -1,14 +1,11 @@
 import datetime
-import html
 import math
 import random
 import re
 import secrets
 from typing import Any, Dict, List, Optional, Tuple
-from urllib.parse import urlencode
 
 from apscheduler.triggers.cron import CronTrigger
-from fastapi.responses import HTMLResponse
 
 from app.chain.download import DownloadChain
 from app.chain.subscribe import SubscribeChain
@@ -25,9 +22,9 @@ from app.utils.http import RequestUtils
 
 class DailyRecommend(_PluginBase):
     plugin_name = "每日推荐"
-    plugin_desc = "根据偏好每天推荐一部电影或电视剧，微信卡片支持点击链接订阅、换一部和跳过。"
+    plugin_desc = "根据偏好每天推荐一部电影或电视剧，可用 WxPusher 独立通道回复 1/2/3 订阅、换一部或跳过。"
     plugin_icon = "Moviepilot_A.png"
-    plugin_version = "0.1.14"
+    plugin_version = "0.2.0"
     plugin_author = "heiyingsky"
     author_url = "https://github.com/heiyingsky"
     plugin_config_prefix = "dailyrecommend_"
@@ -54,7 +51,13 @@ class DailyRecommend(_PluginBase):
     _exclude_exists = True
     _notification_type = "Subscribe"
     _history_limit = 1000
-    _action_link_base = ""
+    _wxpusher_enabled = False
+    _wxpusher_app_token = ""
+    _wxpusher_uids = ""
+    _wxpusher_callback_base = ""
+    _wxpusher_callback_key = ""
+    _wxpusher_only = True
+    _wxpusher_api_url = "https://wxpusher.zjiecode.com/api/send/message"
 
     _genre_options = [
         {"title": "动作", "value": "action"},
@@ -138,7 +141,17 @@ class DailyRecommend(_PluginBase):
             self._exclude_exists = bool(config.get("exclude_exists", True))
             self._notification_type = config.get("notification_type") or "Subscribe"
             self._history_limit = max(100, min(self.__safe_int(config.get("history_limit"), 1000), 5000))
-            self._action_link_base = (config.get("action_link_base") or "").strip()
+            self._wxpusher_enabled = bool(config.get("wxpusher_enabled"))
+            self._wxpusher_app_token = (config.get("wxpusher_app_token") or "").strip()
+            self._wxpusher_uids = (config.get("wxpusher_uids") or "").strip()
+            self._wxpusher_callback_base = (config.get("wxpusher_callback_base") or "").strip()
+            self._wxpusher_callback_key = (config.get("wxpusher_callback_key") or "").strip()
+            self._wxpusher_only = bool(config.get("wxpusher_only", True))
+            self._wxpusher_api_url = (config.get("wxpusher_api_url") or self._wxpusher_api_url).strip()
+
+            if self._wxpusher_enabled and not self._wxpusher_callback_key:
+                self._wxpusher_callback_key = secrets.token_urlsafe(18)
+                self.__update_config()
 
         if self._onlyonce:
             self._onlyonce = False
@@ -220,11 +233,11 @@ class DailyRecommend(_PluginBase):
                 "summary": "清空每日推荐历史"
             },
             {
-                "path": "/action",
-                "endpoint": self.action_from_link,
-                "methods": ["GET"],
+                "path": "/wxpusher_callback",
+                "endpoint": self.wxpusher_callback,
+                "methods": ["POST"],
                 "allow_anonymous": True,
-                "summary": "每日推荐链接操作"
+                "summary": "WxPusher 上行消息回调"
             }
         ]
 
@@ -283,40 +296,6 @@ class DailyRecommend(_PluginBase):
                                             {"title": f"{hour:02d}:00", "value": hour}
                                             for hour in range(24)
                                         ]
-                                    }
-                                }]
-                            }
-                        ]
-                    },
-                    {
-                        "component": "VRow",
-                        "content": [
-                            {
-                                "component": "VCol",
-                                "props": {"cols": 12},
-                                "content": [{
-                                    "component": "VTextField",
-                                    "props": {
-                                        "model": "action_link_base",
-                                        "label": "点击链接访问地址（可空）",
-                                        "placeholder": "例如 http://192.168.1.10:3000；留空则使用 MoviePilot APP_DOMAIN"
-                                    }
-                                }]
-                            }
-                        ]
-                    },
-                    {
-                        "component": "VRow",
-                        "content": [
-                            {
-                                "component": "VCol",
-                                "props": {"cols": 12},
-                                "content": [{
-                                    "component": "VAlert",
-                                    "props": {
-                                        "type": "info",
-                                        "variant": "tonal",
-                                        "text": "微信 ClawBot 会优先拦截普通文字和数字回复；建议使用推荐卡片里的点击链接。链接地址必须是手机能访问到的 MoviePilot 地址。"
                                     }
                                 }]
                             }
@@ -476,6 +455,97 @@ class DailyRecommend(_PluginBase):
                                 }]
                             }
                         ]
+                    },
+                    {
+                        "component": "VRow",
+                        "content": [
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12, "md": 3},
+                                "content": [{
+                                    "component": "VSwitch",
+                                    "props": {"model": "wxpusher_enabled", "label": "启用 WxPusher 独立通道"}
+                                }]
+                            },
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12, "md": 3},
+                                "content": [{
+                                    "component": "VSwitch",
+                                    "props": {"model": "wxpusher_only", "label": "只使用独立通道通知"}
+                                }]
+                            },
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12, "md": 6},
+                                "content": [{
+                                    "component": "VTextField",
+                                    "props": {
+                                        "model": "wxpusher_app_token",
+                                        "label": "WxPusher AppToken",
+                                        "placeholder": "AT_xxx"
+                                    }
+                                }]
+                            }
+                        ]
+                    },
+                    {
+                        "component": "VRow",
+                        "content": [
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12, "md": 6},
+                                "content": [{
+                                    "component": "VTextField",
+                                    "props": {
+                                        "model": "wxpusher_uids",
+                                        "label": "WxPusher UID",
+                                        "placeholder": "UID_xxx，多个用逗号或换行分隔"
+                                    }
+                                }]
+                            },
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12, "md": 6},
+                                "content": [{
+                                    "component": "VTextField",
+                                    "props": {
+                                        "model": "wxpusher_callback_base",
+                                        "label": "公网访问地址",
+                                        "placeholder": "例如 https://mp.example.com"
+                                    }
+                                }]
+                            }
+                        ]
+                    },
+                    {
+                        "component": "VRow",
+                        "content": [
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12, "md": 6},
+                                "content": [{
+                                    "component": "VTextField",
+                                    "props": {
+                                        "model": "wxpusher_callback_key",
+                                        "label": "WxPusher 回调密钥",
+                                        "placeholder": "留空启用后自动生成"
+                                    }
+                                }]
+                            },
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12, "md": 6},
+                                "content": [{
+                                    "component": "VTextField",
+                                    "props": {
+                                        "model": "wxpusher_api_url",
+                                        "label": "WxPusher API 地址",
+                                        "placeholder": "https://wxpusher.zjiecode.com/api/send/message"
+                                    }
+                                }]
+                            }
+                        ]
                     }
                 ]
             }
@@ -500,7 +570,13 @@ class DailyRecommend(_PluginBase):
             "exclude_exists": True,
             "notification_type": "Subscribe",
             "history_limit": 1000,
-            "action_link_base": ""
+            "wxpusher_enabled": False,
+            "wxpusher_app_token": "",
+            "wxpusher_uids": "",
+            "wxpusher_callback_base": "",
+            "wxpusher_callback_key": "",
+            "wxpusher_only": True,
+            "wxpusher_api_url": "https://wxpusher.zjiecode.com/api/send/message"
         }
 
     def get_page(self) -> List[dict]:
@@ -540,9 +616,29 @@ class DailyRecommend(_PluginBase):
                 "props": {
                     "type": "success",
                     "variant": "tonal",
-                    "text": f"当前推荐：{active.get('title')}，微信推荐卡片可点击链接操作。"
+                    "text": f"当前推荐：{active.get('title')}，独立通道回复 1 订阅、2 换一部、3 跳过；MoviePilot 微信命令仍可用：/每日要 /每日换 /每日跳。"
                 }
             })
+        if self._wxpusher_enabled:
+            callback_url = self.__wxpusher_callback_url()
+            if callback_url:
+                content.append({
+                    "component": "VAlert",
+                    "props": {
+                        "type": "info",
+                        "variant": "tonal",
+                        "text": f"WxPusher 回调地址：{callback_url}"
+                    }
+                })
+            else:
+                content.append({
+                    "component": "VAlert",
+                    "props": {
+                        "type": "warning",
+                        "variant": "tonal",
+                        "text": "已启用 WxPusher，但未配置公网访问地址或回调密钥。"
+                    }
+                })
         content.append({
             "component": "VAlert",
             "props": {
@@ -562,21 +658,43 @@ class DailyRecommend(_PluginBase):
         self.del_data("skip_date")
         return {"success": True, "message": "每日推荐历史已清空"}
 
-    def action_from_link(self, action: str = "", key: str = ""):
-        action = (action or "").strip().lower()
-        if key != self.__action_key():
-            return self.__html_response("每日推荐", "链接校验失败，已拒绝执行。")
-        if action not in {"subscribe", "change", "skip"}:
-            return self.__html_response("每日推荐", "链接动作无效。")
+    def wxpusher_callback(self, payload: Dict[str, Any] = None, key: str = "") -> Dict[str, Any]:
+        if not self._wxpusher_callback_key or key != self._wxpusher_callback_key:
+            logger.warn("每日推荐 WxPusher 回调密钥不匹配，已拒绝")
+            return {"success": False, "message": "invalid key"}
+
+        data = self.__wxpusher_payload_data(payload or {})
+        uid = str(data.get("uid") or "").strip()
+        content = str(data.get("content") or "").strip()
+        action = self.__wxpusher_action_from_text(content)
+        logger.info(f"每日推荐收到 WxPusher 回调：uid={uid or '-'}, content={content}, action={action or '-'}")
+
+        if not action:
+            self.__post(
+                title="每日推荐",
+                text="无法识别操作。请回复 1 订阅、2 换一部、3 跳过。",
+                wxpusher_uid=uid,
+                skip_moviepilot=True
+            )
+            return {"success": False, "message": "unknown action"}
 
         active = self.get_data("active") or {}
         if not active:
-            return self.__html_response("每日推荐", "当前没有可操作的推荐。")
+            self.__post(
+                title="每日推荐",
+                text="当前没有可操作的推荐，请先在插件里立即推荐一次。",
+                wxpusher_uid=uid,
+                skip_moviepilot=True
+            )
+            return {"success": False, "message": "no active recommendation"}
 
-        logger.info(f"每日推荐收到链接动作：action={action}, title={active.get('title')}")
-        self.__handle_action(action, active=active)
-        labels = {"subscribe": "订阅", "change": "换一部", "skip": "跳过"}
-        return self.__html_response("每日推荐", f"已执行：{labels.get(action, action)}。可以返回微信查看结果。")
+        self.__handle_action(
+            action,
+            active=active,
+            wxpusher_uid=uid,
+            skip_moviepilot=True
+        )
+        return {"success": True, "message": action}
 
     def recommend(
         self,
@@ -640,27 +758,6 @@ class DailyRecommend(_PluginBase):
         message = f"已生成推荐：{active.get('title')}"
         self.__save_last_result(True, message)
         return {"success": True, "message": message, "data": active}
-
-    @eventmanager.register(EventType.UserMessage)
-    def on_user_message(self, event: Event):
-        if not self._enabled or not event:
-            return
-        event_data = event.event_data or {}
-        text = self.__extract_event_text(event_data)
-        action = self.__action_from_text(text)
-        if not action:
-            return
-
-        logger.info(f"每日推荐收到用户回复：text={text}, action={action}, event_data={event_data}")
-        active = self.get_data("active") or {}
-        if not active:
-            logger.info("每日推荐收到用户回复，但当前没有 active 推荐，忽略")
-            return
-
-        channel = event_data.get("channel")
-        userid = event_data.get("userid") or event_data.get("user")
-
-        self.__handle_action(action, active=active, channel=channel, userid=userid)
 
     @eventmanager.register(EventType.PluginAction)
     def on_plugin_action(self, event: Event):
@@ -915,7 +1012,14 @@ class DailyRecommend(_PluginBase):
         logger.info(f"{mediainfo.title_year} 未订阅/未入库，作为可推荐候选")
         return False
 
-    def __subscribe_active(self, active: Dict[str, Any], channel: Any = None, userid: Any = None):
+    def __subscribe_active(
+        self,
+        active: Dict[str, Any],
+        channel: Any = None,
+        userid: Any = None,
+        wxpusher_uid: Optional[str] = None,
+        skip_moviepilot: bool = False
+    ):
         media_type = MediaType.MOVIE if active.get("media_type") == "movie" else MediaType.TV
         meta = MetaInfo(active.get("title"))
         meta.type = media_type
@@ -933,14 +1037,28 @@ class DailyRecommend(_PluginBase):
 
         if not mediainfo:
             logger.warn(f"每日推荐订阅失败：{active.get('title')} 未识别到媒体信息")
-            self.__post(title="订阅失败", text=f"{active.get('title')} 未识别到媒体信息。", channel=channel, userid=userid)
+            self.__post(
+                title="订阅失败",
+                text=f"{active.get('title')} 未识别到媒体信息。",
+                channel=channel,
+                userid=userid,
+                wxpusher_uid=wxpusher_uid,
+                skip_moviepilot=skip_moviepilot
+            )
             return
 
         if SubscribeChain().exists(mediainfo=mediainfo, meta=meta):
             logger.info(f"每日推荐订阅已存在：{mediainfo.title_year}")
             self.__append_history(active, "already_subscribed")
             self.save_data("active", {})
-            self.__post(title="订阅已存在", text=f"{mediainfo.title_year} 已在订阅列表中。", channel=channel, userid=userid)
+            self.__post(
+                title="订阅已存在",
+                text=f"{mediainfo.title_year} 已在订阅列表中。",
+                channel=channel,
+                userid=userid,
+                wxpusher_uid=wxpusher_uid,
+                skip_moviepilot=skip_moviepilot
+            )
             return
 
         sid, message = SubscribeChain().add(
@@ -956,15 +1074,35 @@ class DailyRecommend(_PluginBase):
             logger.info(f"每日推荐订阅成功：{mediainfo.title_year}, sid={sid}, message={message}")
             self.__append_history(active, "subscribed")
             self.save_data("active", {})
-            self.__post(title="已加入订阅", text=f"{mediainfo.title_year}\n结果：{message}", channel=channel, userid=userid)
+            self.__post(
+                title="已加入订阅",
+                text=f"{mediainfo.title_year}\n结果：{message}",
+                channel=channel,
+                userid=userid,
+                wxpusher_uid=wxpusher_uid,
+                skip_moviepilot=skip_moviepilot
+            )
         else:
             logger.warn(f"每日推荐订阅失败：{mediainfo.title_year}, message={message}")
-            self.__post(title="订阅失败", text=f"{mediainfo.title_year}\n原因：{message}", channel=channel, userid=userid)
+            self.__post(
+                title="订阅失败",
+                text=f"{mediainfo.title_year}\n原因：{message}",
+                channel=channel,
+                userid=userid,
+                wxpusher_uid=wxpusher_uid,
+                skip_moviepilot=skip_moviepilot
+            )
 
-    def __post_recommendation(self, item: Dict[str, Any], channel: Any = None, userid: Any = None):
+    def __post_recommendation(
+        self,
+        item: Dict[str, Any],
+        channel: Any = None,
+        userid: Any = None,
+        wxpusher_uid: Optional[str] = None,
+        skip_moviepilot: bool = False
+    ):
         mtype = "电影" if item.get("media_type") == "movie" else "电视剧"
         title = f"今日推荐：{item.get('title')}"
-        links = self.__action_links()
 
         lines = [
             f"类型：{mtype}",
@@ -973,19 +1111,12 @@ class DailyRecommend(_PluginBase):
             f"主演：{self.__cast_text(item.get('cast'))}",
             f"简介：{self.__core_overview(item.get('overview'))}",
             "",
-            "点击链接操作："
+            "回复 1：订阅",
+            "回复 2：换一部",
+            "回复 3：跳过",
+            "",
+            "MoviePilot 微信备用命令：/每日要 /每日换 /每日跳"
         ]
-        if links:
-            lines.extend([
-                f"订阅：{links['subscribe']}",
-                f"换一部：{links['change']}",
-                f"跳过：{links['skip']}"
-            ])
-        else:
-            lines.extend([
-                "点击链接未启用。",
-                "请在插件配置填写“点击链接访问地址”，或配置 MoviePilot APP_DOMAIN。"
-            ])
         buttons = [
             [
                 {"text": "订阅", "callback_data": f"[PLUGIN]{self.__class__.__name__}|subscribe"},
@@ -999,25 +1130,61 @@ class DailyRecommend(_PluginBase):
             image=item.get("poster"),
             channel=channel,
             userid=userid,
-            buttons=buttons
+            buttons=buttons,
+            wxpusher_uid=wxpusher_uid,
+            skip_moviepilot=skip_moviepilot
         )
 
-    def __handle_action(self, action: str, active: Dict[str, Any], channel: Any = None, userid: Any = None):
+    def __handle_action(
+        self,
+        action: str,
+        active: Dict[str, Any],
+        channel: Any = None,
+        userid: Any = None,
+        wxpusher_uid: Optional[str] = None,
+        skip_moviepilot: bool = False
+    ):
         logger.info(
             f"每日推荐处理动作：action={action}, title={active.get('title')}, "
             f"channel={channel or '默认'}, userid={userid or '-'}"
         )
         if action == "subscribe":
-            self.__subscribe_active(active, channel=channel, userid=userid)
+            self.__subscribe_active(
+                active,
+                channel=channel,
+                userid=userid,
+                wxpusher_uid=wxpusher_uid,
+                skip_moviepilot=skip_moviepilot
+            )
         elif action == "change":
-            self.__change_active(active, channel=channel, userid=userid)
+            self.__change_active(
+                active,
+                channel=channel,
+                userid=userid,
+                wxpusher_uid=wxpusher_uid,
+                skip_moviepilot=skip_moviepilot
+            )
         elif action == "skip":
             self.__append_history(active, "skipped")
             self.save_data("active", {})
             self.save_data("skip_date", self.__today())
-            self.__post(title="今日推荐已跳过", text="明天会继续按你的偏好推荐。", channel=channel, userid=userid)
+            self.__post(
+                title="今日推荐已跳过",
+                text="明天会继续按你的偏好推荐。",
+                channel=channel,
+                userid=userid,
+                wxpusher_uid=wxpusher_uid,
+                skip_moviepilot=skip_moviepilot
+            )
 
-    def __change_active(self, active: Dict[str, Any], channel: Any = None, userid: Any = None):
+    def __change_active(
+        self,
+        active: Dict[str, Any],
+        channel: Any = None,
+        userid: Any = None,
+        wxpusher_uid: Optional[str] = None,
+        skip_moviepilot: bool = False
+    ):
         self.__append_history(active, "changed")
         old_key = active.get("key")
         today = self.__today()
@@ -1039,6 +1206,14 @@ class DailyRecommend(_PluginBase):
                 logger.error(f"每日推荐换一部执行失败：{err}")
                 self.__save_last_result(False, f"换一部执行失败：{err}")
                 self.save_data("active", active)
+                self.__post(
+                    title="换一部失败",
+                    text=f"换一部执行失败：{err}",
+                    channel=channel,
+                    userid=userid,
+                    wxpusher_uid=wxpusher_uid,
+                    skip_moviepilot=skip_moviepilot
+                )
                 return
             if not candidate:
                 continue
@@ -1050,13 +1225,27 @@ class DailyRecommend(_PluginBase):
             }
             self.save_data("active", new_active)
             self.__append_history(new_active, "recommended")
-            self.__post_recommendation(new_active, channel=channel, userid=userid)
+            self.__post_recommendation(
+                new_active,
+                channel=channel,
+                userid=userid,
+                wxpusher_uid=wxpusher_uid,
+                skip_moviepilot=skip_moviepilot
+            )
             self.__save_last_result(True, f"已换一部推荐：{new_active.get('title')}")
             return
 
         logger.warn("每日推荐换一部未找到可替换候选，保留当前推荐")
         self.save_data("active", active)
         self.__save_last_result(True, "换一部未找到可替换候选，已保留当前推荐")
+        self.__post(
+            title="每日推荐",
+            text="暂时没有找到更多符合条件的推荐，已保留当前推荐。",
+            channel=channel,
+            userid=userid,
+            wxpusher_uid=wxpusher_uid,
+            skip_moviepilot=skip_moviepilot
+        )
 
     def __post(
         self,
@@ -1065,8 +1254,23 @@ class DailyRecommend(_PluginBase):
         image: Optional[str] = None,
         channel: Any = None,
         userid: Any = None,
-        buttons: Optional[List[Any]] = None
+        buttons: Optional[List[Any]] = None,
+        wxpusher_uid: Optional[str] = None,
+        skip_moviepilot: bool = False
     ):
+        sent_wxpusher = False
+        if self._wxpusher_enabled and (wxpusher_uid or (not channel and not userid)):
+            sent_wxpusher = self.__post_wxpusher(
+                title=title,
+                text=text,
+                image=image,
+                uid=wxpusher_uid
+            )
+        if skip_moviepilot:
+            return
+        if self._wxpusher_enabled and self._wxpusher_only and sent_wxpusher and not channel and not userid:
+            return
+
         mtype = self.__notification_type()
         kwargs = {
             "mtype": mtype,
@@ -1090,6 +1294,102 @@ class DailyRecommend(_PluginBase):
         except Exception as err:
             logger.error(f"每日推荐通知发送失败：{err}")
             self.__save_last_result(False, f"通知发送失败：{err}")
+
+    def __post_wxpusher(
+        self,
+        title: str,
+        text: str = "",
+        image: Optional[str] = None,
+        uid: Optional[str] = None
+    ) -> bool:
+        if not self._wxpusher_enabled:
+            return False
+        if not self._wxpusher_app_token:
+            logger.warn("每日推荐 WxPusher 未配置 AppToken，跳过独立推送")
+            return False
+
+        uids = [uid] if uid else self.__wxpusher_uid_list()
+        uids = [item for item in uids if item]
+        if not uids:
+            logger.warn("每日推荐 WxPusher 未配置 UID，跳过独立推送")
+            return False
+
+        content = self.__wxpusher_content(title=title, text=text, image=image)
+        payload = {
+            "appToken": self._wxpusher_app_token,
+            "content": content,
+            "summary": self.__short_text(title, 80),
+            "contentType": 1,
+            "uids": uids
+        }
+        try:
+            res = RequestUtils(
+                headers={"Content-Type": "application/json"},
+                timeout=20
+            ).post_res(url=self._wxpusher_api_url, json=payload)
+            if not res:
+                logger.warn("每日推荐 WxPusher 推送失败：请求无响应")
+                return False
+            try:
+                data = res.json() or {}
+            except Exception:
+                data = {}
+            code = data.get("code")
+            if res.status_code != 200 or code not in (None, 0, 200, 1000):
+                logger.warn(f"每日推荐 WxPusher 推送失败：HTTP {res.status_code}, response={data or res.text[:200]}")
+                return False
+            logger.info(f"每日推荐 WxPusher 推送成功：title={title}, uids={len(uids)}")
+            return True
+        except Exception as err:
+            logger.error(f"每日推荐 WxPusher 推送异常：{err}")
+            return False
+
+    @staticmethod
+    def __wxpusher_content(title: str, text: str = "", image: Optional[str] = None) -> str:
+        parts = [str(title or "").strip()]
+        if text:
+            parts.append(str(text).strip())
+        if image:
+            parts.append(f"海报：{image}")
+        return "\n\n".join(part for part in parts if part)
+
+    def __wxpusher_uid_list(self) -> List[str]:
+        return [
+            item.strip()
+            for item in re.split(r"[,，\s]+", self._wxpusher_uids or "")
+            if item.strip()
+        ]
+
+    @staticmethod
+    def __wxpusher_payload_data(payload: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(payload, dict):
+            return {}
+        data = payload.get("data")
+        if isinstance(data, dict):
+            return data
+        return payload
+
+    @classmethod
+    def __wxpusher_action_from_text(cls, text: str) -> Optional[str]:
+        value = str(text or "").strip()
+        value = re.sub(r"^#\d+\s*", "", value).strip()
+        lower = value.lower()
+        if value in {"1", "１"} or lower in {"订阅", "要", "/每日要", "subscribe"}:
+            return "subscribe"
+        if value in {"2", "２"} or lower in {"换", "换一部", "/每日换", "change"}:
+            return "change"
+        if value in {"3", "３"} or lower in {"跳", "跳过", "/每日跳", "skip"}:
+            return "skip"
+        return None
+
+    def __wxpusher_callback_url(self) -> str:
+        base = (self._wxpusher_callback_base or settings.APP_DOMAIN or "").strip()
+        key = self._wxpusher_callback_key
+        if not base or not key:
+            return ""
+        if not base.lower().startswith(("http://", "https://")):
+            base = f"https://{base}"
+        return f"{base.rstrip('/')}{settings.API_V1_STR}/plugin/{self.__class__.__name__}/wxpusher_callback?key={key}"
 
     def __has_partial_exists(self, mediainfo: MediaInfo, meta: MetaInfo, no_exists: Dict[Any, Any]) -> bool:
         if not no_exists or mediainfo.type != MediaType.TV:
@@ -1221,49 +1521,14 @@ class DailyRecommend(_PluginBase):
             "exclude_exists": self._exclude_exists,
             "notification_type": self._notification_type,
             "history_limit": self._history_limit,
-            "action_link_base": self._action_link_base
+            "wxpusher_enabled": self._wxpusher_enabled,
+            "wxpusher_app_token": self._wxpusher_app_token,
+            "wxpusher_uids": self._wxpusher_uids,
+            "wxpusher_callback_base": self._wxpusher_callback_base,
+            "wxpusher_callback_key": self._wxpusher_callback_key,
+            "wxpusher_only": self._wxpusher_only,
+            "wxpusher_api_url": self._wxpusher_api_url
         })
-
-    def __action_links(self) -> Dict[str, str]:
-        base = self.__action_base_url()
-        if not base:
-            return {}
-        path = f"{settings.API_V1_STR}/plugin/{self.__class__.__name__}/action"
-        key = self.__action_key()
-        return {
-            action: f"{base.rstrip('/')}{path}?{urlencode({'action': action, 'key': key})}"
-            for action in ("subscribe", "change", "skip")
-        }
-
-    def __action_base_url(self) -> str:
-        base = (self._action_link_base or settings.APP_DOMAIN or "").strip()
-        if not base:
-            return ""
-        if not base.lower().startswith(("http://", "https://")):
-            base = f"http://{base}"
-        return base.rstrip("/")
-
-    def __action_key(self) -> str:
-        key = self.get_data("action_key")
-        if not key:
-            key = secrets.token_urlsafe(24)
-            self.save_data("action_key", key)
-        return str(key)
-
-    @staticmethod
-    def __html_response(title: str, message: str) -> HTMLResponse:
-        content = (
-            "<!doctype html><html><head><meta charset='utf-8'>"
-            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-            f"<title>{html.escape(title)}</title>"
-            "<style>body{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;"
-            "padding:32px;line-height:1.6;color:#222}.box{max-width:560px;margin:auto;"
-            "border:1px solid #ddd;border-radius:12px;padding:24px}</style>"
-            "</head><body><div class='box'>"
-            f"<h2>{html.escape(title)}</h2><p>{html.escape(message)}</p>"
-            "</div></body></html>"
-        )
-        return HTMLResponse(content=content)
 
     @staticmethod
     def __safe_int(value: Any, default: int) -> int:
@@ -1368,6 +1633,13 @@ class DailyRecommend(_PluginBase):
         text = " ".join(str(value or "").split())
         if not text:
             return "暂无简介。"
+        if len(text) <= limit:
+            return text
+        return text[:limit].rstrip("，。,. ") + "..."
+
+    @staticmethod
+    def __short_text(value: Optional[str], limit: int = 80) -> str:
+        text = " ".join(str(value or "").split())
         if len(text) <= limit:
             return text
         return text[:limit].rstrip("，。,. ") + "..."
