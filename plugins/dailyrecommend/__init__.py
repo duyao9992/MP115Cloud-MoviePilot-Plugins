@@ -21,9 +21,9 @@ from app.utils.http import RequestUtils
 
 class DailyRecommend(_PluginBase):
     plugin_name = "每日推荐"
-    plugin_desc = "根据偏好每天推荐一部电影或电视剧，微信回复 /每日要、/每日换、/每日跳。"
+    plugin_desc = "根据偏好每天推荐一部电影或电视剧，微信回复 1 订阅、2 换一部、3 跳过。"
     plugin_icon = "Moviepilot_A.png"
-    plugin_version = "0.1.10"
+    plugin_version = "0.1.11"
     plugin_author = "heiyingsky"
     author_url = "https://github.com/heiyingsky"
     plugin_config_prefix = "dailyrecommend_"
@@ -492,7 +492,7 @@ class DailyRecommend(_PluginBase):
                 "props": {
                     "type": "success",
                     "variant": "tonal",
-                    "text": f"当前推荐：{active.get('title')}，微信回复：/每日要 / /每日换 / /每日跳。"
+                    "text": f"当前推荐：{active.get('title')}，微信回复：1 订阅 / 2 换一部 / 3 跳过。"
                 }
             })
         content.append({
@@ -908,9 +908,9 @@ class DailyRecommend(_PluginBase):
             f"主演：{self.__cast_text(item.get('cast'))}",
             f"简介：{self.__core_overview(item.get('overview'))}",
             "",
-            "/每日要：订阅",
-            "/每日换：换一部",
-            "/每日跳：跳过"
+            "回复 1：订阅",
+            "回复 2：换一部",
+            "回复 3：跳过"
         ]
         buttons = [
             [
