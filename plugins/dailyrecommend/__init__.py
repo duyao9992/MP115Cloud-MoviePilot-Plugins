@@ -21,9 +21,9 @@ from app.utils.http import RequestUtils
 
 class DailyRecommend(_PluginBase):
     plugin_name = "每日推荐"
-    plugin_desc = "根据偏好每天推荐一部电影或电视剧，微信回复 1 订阅、2 换一部、3 跳过。"
+    plugin_desc = "根据偏好每天推荐一部电影或电视剧，微信只回复数字 1 订阅、2 换一部、3 跳过。"
     plugin_icon = "Moviepilot_A.png"
-    plugin_version = "0.1.11"
+    plugin_version = "0.1.12"
     plugin_author = "heiyingsky"
     author_url = "https://github.com/heiyingsky"
     plugin_config_prefix = "dailyrecommend_"
@@ -492,7 +492,7 @@ class DailyRecommend(_PluginBase):
                 "props": {
                     "type": "success",
                     "variant": "tonal",
-                    "text": f"当前推荐：{active.get('title')}，微信回复：1 订阅 / 2 换一部 / 3 跳过。"
+                    "text": f"当前推荐：{active.get('title')}，微信只回复数字：1 订阅 / 2 换一部 / 3 跳过。"
                 }
             })
         content.append({
@@ -908,9 +908,9 @@ class DailyRecommend(_PluginBase):
             f"主演：{self.__cast_text(item.get('cast'))}",
             f"简介：{self.__core_overview(item.get('overview'))}",
             "",
-            "回复 1：订阅",
-            "回复 2：换一部",
-            "回复 3：跳过"
+            "只回复数字 1：订阅",
+            "只回复数字 2：换一部",
+            "只回复数字 3：跳过"
         ]
         buttons = [
             [
@@ -1210,11 +1210,11 @@ class DailyRecommend(_PluginBase):
             return None
         value = value.translate(str.maketrans({"１": "1", "２": "2", "３": "3"}))
         lower = value.lower().strip()
-        if lower.startswith("/每日要") or lower.startswith("/dailyrecommend_subscribe") or lower in {"1", "要", "要了", "收", "收下", "订", "订阅", "加入订阅", "subscribe"}:
+        if lower.startswith("/每日要") or lower.startswith("/dailyrecommend_subscribe") or lower in {"1", "subscribe"}:
             return "subscribe"
-        if lower.startswith("/每日换") or lower.startswith("/dailyrecommend_change") or lower in {"2", "换", "换一部", "换一个", "换部", "下一部", "再来", "change"}:
+        if lower.startswith("/每日换") or lower.startswith("/dailyrecommend_change") or lower in {"2", "change"}:
             return "change"
-        if lower.startswith("/每日跳") or lower.startswith("/dailyrecommend_skip") or lower in {"3", "跳", "今日跳过", "跳过", "skip"}:
+        if lower.startswith("/每日跳") or lower.startswith("/dailyrecommend_skip") or lower in {"3", "skip"}:
             return "skip"
 
         match = re.match(r"^(?:回复\s*)?([123])(?:\s|$|[：:，,。.！!])", value)

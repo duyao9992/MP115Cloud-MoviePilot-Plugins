@@ -5,9 +5,11 @@
 ## 菜单
 
 ```text
-回复 1 或 /dailyrecommend_subscribe：订阅
-回复 2 或 /dailyrecommend_change：换一部
-回复 3 或 /dailyrecommend_skip：今日跳过
+微信只回复数字 1：订阅
+微信只回复数字 2：换一部
+微信只回复数字 3：今日跳过
+
+备用命令：/每日要、/每日换、/每日跳。
 ```
 
 ## 推荐逻辑
