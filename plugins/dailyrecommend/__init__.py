@@ -21,9 +21,9 @@ from app.utils.http import RequestUtils
 
 class DailyRecommend(_PluginBase):
     plugin_name = "每日推荐"
-    plugin_desc = "根据偏好每天推荐一部电影或电视剧，微信回复要、换、跳。"
+    plugin_desc = "根据偏好每天推荐一部电影或电视剧，微信回复 /每日要、/每日换、/每日跳。"
     plugin_icon = "Moviepilot_A.png"
-    plugin_version = "0.1.9"
+    plugin_version = "0.1.10"
     plugin_author = "heiyingsky"
     author_url = "https://github.com/heiyingsky"
     plugin_config_prefix = "dailyrecommend_"
@@ -146,6 +146,27 @@ class DailyRecommend(_PluginBase):
     @staticmethod
     def get_command() -> List[Dict[str, Any]]:
         return [
+            {
+                "cmd": "/每日要",
+                "event": EventType.PluginAction,
+                "desc": "订阅当前每日推荐",
+                "category": "每日推荐",
+                "data": {"action": "dailyrecommend_subscribe"}
+            },
+            {
+                "cmd": "/每日换",
+                "event": EventType.PluginAction,
+                "desc": "换一部每日推荐",
+                "category": "每日推荐",
+                "data": {"action": "dailyrecommend_change"}
+            },
+            {
+                "cmd": "/每日跳",
+                "event": EventType.PluginAction,
+                "desc": "今日跳过每日推荐",
+                "category": "每日推荐",
+                "data": {"action": "dailyrecommend_skip"}
+            },
             {
                 "cmd": "/dailyrecommend_subscribe",
                 "event": EventType.PluginAction,
@@ -471,7 +492,7 @@ class DailyRecommend(_PluginBase):
                 "props": {
                     "type": "success",
                     "variant": "tonal",
-                    "text": f"当前推荐：{active.get('title')}，微信回复：要 / 换 / 跳。"
+                    "text": f"当前推荐：{active.get('title')}，微信回复：/每日要 / /每日换 / /每日跳。"
                 }
             })
         content.append({
@@ -887,7 +908,9 @@ class DailyRecommend(_PluginBase):
             f"主演：{self.__cast_text(item.get('cast'))}",
             f"简介：{self.__core_overview(item.get('overview'))}",
             "",
-            "回复：要 / 换 / 跳"
+            "/每日要：订阅",
+            "/每日换：换一部",
+            "/每日跳：跳过"
         ]
         buttons = [
             [
@@ -1187,11 +1210,11 @@ class DailyRecommend(_PluginBase):
             return None
         value = value.translate(str.maketrans({"１": "1", "２": "2", "３": "3"}))
         lower = value.lower().strip()
-        if lower.startswith("/dailyrecommend_subscribe") or lower in {"1", "要", "要了", "收", "收下", "订", "订阅", "加入订阅", "subscribe"}:
+        if lower.startswith("/每日要") or lower.startswith("/dailyrecommend_subscribe") or lower in {"1", "要", "要了", "收", "收下", "订", "订阅", "加入订阅", "subscribe"}:
             return "subscribe"
-        if lower.startswith("/dailyrecommend_change") or lower in {"2", "换", "换一部", "换一个", "换部", "下一部", "再来", "change"}:
+        if lower.startswith("/每日换") or lower.startswith("/dailyrecommend_change") or lower in {"2", "换", "换一部", "换一个", "换部", "下一部", "再来", "change"}:
             return "change"
-        if lower.startswith("/dailyrecommend_skip") or lower in {"3", "跳", "今日跳过", "跳过", "skip"}:
+        if lower.startswith("/每日跳") or lower.startswith("/dailyrecommend_skip") or lower in {"3", "跳", "今日跳过", "跳过", "skip"}:
             return "skip"
 
         match = re.match(r"^(?:回复\s*)?([123])(?:\s|$|[：:，,。.！!])", value)
