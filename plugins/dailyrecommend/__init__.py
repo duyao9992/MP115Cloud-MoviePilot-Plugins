@@ -22,7 +22,7 @@ class DailyRecommend(_PluginBase):
     plugin_name = "每日推荐"
     plugin_desc = "根据偏好每天推荐一部电影或电视剧，微信回复 1 订阅、2 换一部、3 今日跳过。"
     plugin_icon = "Moviepilot_A.png"
-    plugin_version = "0.1.2"
+    plugin_version = "0.1.3"
     plugin_author = "heiyingsky"
     author_url = "https://github.com/heiyingsky"
     plugin_config_prefix = "dailyrecommend_"
@@ -46,6 +46,7 @@ class DailyRecommend(_PluginBase):
     _exclude_recommended = True
     _exclude_subscribed = True
     _exclude_exists = True
+    _notification_type = "Subscribe"
     _history_limit = 1000
 
     _genre_options = [
@@ -127,6 +128,7 @@ class DailyRecommend(_PluginBase):
             self._exclude_recommended = bool(config.get("exclude_recommended", True))
             self._exclude_subscribed = bool(config.get("exclude_subscribed", True))
             self._exclude_exists = bool(config.get("exclude_exists", True))
+            self._notification_type = config.get("notification_type") or "Subscribe"
             self._history_limit = max(100, min(self.__safe_int(config.get("history_limit"), 1000), 5000))
 
         if self._onlyonce:
@@ -348,6 +350,23 @@ class DailyRecommend(_PluginBase):
                                     "component": "VSwitch",
                                     "props": {"model": "exclude_exists", "label": "排除已入库"}
                                 }]
+                            },
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12, "md": 3},
+                                "content": [{
+                                    "component": "VSelect",
+                                    "props": {
+                                        "model": "notification_type",
+                                        "label": "通知类型",
+                                        "items": [
+                                            {"title": "订阅", "value": "Subscribe"},
+                                            {"title": "插件", "value": "Plugin"},
+                                            {"title": "手动处理", "value": "Manual"},
+                                            {"title": "其它", "value": "Other"}
+                                        ]
+                                    }
+                                }]
                             }
                         ]
                     }
@@ -371,6 +390,7 @@ class DailyRecommend(_PluginBase):
             "exclude_recommended": True,
             "exclude_subscribed": True,
             "exclude_exists": True,
+            "notification_type": "Subscribe",
             "history_limit": 1000
         }
 
@@ -674,9 +694,12 @@ class DailyRecommend(_PluginBase):
 
         if self._exclude_exists:
             try:
-                exists, _ = DownloadChain().get_no_exists_info(meta=meta, mediainfo=mediainfo)
+                exists, no_exists = DownloadChain().get_no_exists_info(meta=meta, mediainfo=mediainfo)
                 if exists:
-                    logger.info(f"{mediainfo.title_year} 已入库，跳过推荐")
+                    logger.info(f"{mediainfo.title_year} 已完整入库，跳过推荐")
+                    return True
+                if self.__has_partial_exists(mediainfo=mediainfo, meta=meta, no_exists=no_exists):
+                    logger.info(f"{mediainfo.title_year} 已部分入库，跳过推荐：缺失={no_exists}")
                     return True
             except Exception as err:
                 logger.warn(f"{mediainfo.title_year} 入库状态检查失败：{err}")
@@ -738,8 +761,9 @@ class DailyRecommend(_PluginBase):
         self.__post(title=title, text="\n".join(lines), image=item.get("poster"), channel=channel, userid=userid)
 
     def __post(self, title: str, text: str = "", image: Optional[str] = None, channel: Any = None, userid: Any = None):
+        mtype = self.__notification_type()
         kwargs = {
-            "mtype": NotificationType.Plugin,
+            "mtype": mtype,
             "title": title,
             "text": text or datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
@@ -749,7 +773,73 @@ class DailyRecommend(_PluginBase):
             kwargs["channel"] = channel
         if userid:
             kwargs["userid"] = userid
-        self.post_message(**kwargs)
+        try:
+            logger.info(
+                f"每日推荐发送通知：type={getattr(mtype, 'value', mtype)}, "
+                f"channel={channel or '默认'}, userid={userid or '-'}, title={title}"
+            )
+            self.post_message(**kwargs)
+        except Exception as err:
+            logger.error(f"每日推荐通知发送失败：{err}")
+            self.__save_last_result(False, f"通知发送失败：{err}")
+
+    def __has_partial_exists(self, mediainfo: MediaInfo, meta: MetaInfo, no_exists: Dict[Any, Any]) -> bool:
+        if not no_exists or mediainfo.type != MediaType.TV:
+            return False
+
+        expected_seasons = self.__expected_seasons(mediainfo=mediainfo, meta=meta)
+        missing_full_seasons = set()
+        has_partial_missing = False
+
+        for season_map in no_exists.values():
+            if not isinstance(season_map, dict):
+                continue
+            for season, info in season_map.items():
+                season_num = self.__safe_int(season, -1)
+                if season_num < 0:
+                    continue
+                episodes = self.__missing_episodes(info)
+                if episodes:
+                    has_partial_missing = True
+                else:
+                    missing_full_seasons.add(season_num)
+
+        if has_partial_missing:
+            return True
+        if expected_seasons and missing_full_seasons >= expected_seasons:
+            return False
+        return bool(missing_full_seasons)
+
+    def __expected_seasons(self, mediainfo: MediaInfo, meta: MetaInfo) -> set:
+        seasons = set()
+        season_filter = set(getattr(meta, "season_list", None) or [])
+        for season, episodes in (getattr(mediainfo, "seasons", None) or {}).items():
+            season_num = self.__safe_int(season, -1)
+            if season_num < 0 or not episodes:
+                continue
+            if getattr(meta, "sea", None) and season_filter and season_num not in season_filter:
+                continue
+            seasons.add(season_num)
+        return seasons
+
+    @staticmethod
+    def __missing_episodes(info: Any) -> List[Any]:
+        if isinstance(info, dict):
+            episodes = info.get("episodes")
+        else:
+            episodes = getattr(info, "episodes", None)
+        return list(episodes or [])
+
+    def __notification_type(self):
+        value = self._notification_type or "Subscribe"
+        if isinstance(value, NotificationType):
+            return value
+        if hasattr(NotificationType, str(value)):
+            return getattr(NotificationType, str(value))
+        for item in NotificationType:
+            if item.name == value or item.value == value:
+                return item
+        return NotificationType.Subscribe
 
     def __tmdb_get(self, path: str, params: Dict[str, Any]) -> Dict[str, Any]:
         token = self._tmdb_token
@@ -820,6 +910,7 @@ class DailyRecommend(_PluginBase):
             "exclude_recommended": self._exclude_recommended,
             "exclude_subscribed": self._exclude_subscribed,
             "exclude_exists": self._exclude_exists,
+            "notification_type": self._notification_type,
             "history_limit": self._history_limit
         })
 
