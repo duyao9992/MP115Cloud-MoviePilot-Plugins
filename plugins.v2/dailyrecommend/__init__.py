@@ -23,7 +23,7 @@ class DailyRecommend(_PluginBase):
     plugin_name = "每日推荐"
     plugin_desc = "根据偏好每天推荐一部电影或电视剧，微信回复订阅、换、跳过。"
     plugin_icon = "Moviepilot_A.png"
-    plugin_version = "0.1.7"
+    plugin_version = "0.1.8"
     plugin_author = "heiyingsky"
     author_url = "https://github.com/heiyingsky"
     plugin_config_prefix = "dailyrecommend_"
@@ -48,7 +48,7 @@ class DailyRecommend(_PluginBase):
     _exclude_recommended = True
     _exclude_subscribed = True
     _exclude_exists = True
-    _notification_type = "Plugin"
+    _notification_type = "Subscribe"
     _history_limit = 1000
 
     _genre_options = [
@@ -131,8 +131,7 @@ class DailyRecommend(_PluginBase):
             self._exclude_recommended = bool(config.get("exclude_recommended", True))
             self._exclude_subscribed = bool(config.get("exclude_subscribed", True))
             self._exclude_exists = bool(config.get("exclude_exists", True))
-            notification_type = config.get("notification_type")
-            self._notification_type = "Plugin" if notification_type in (None, "", "Subscribe", "订阅") else notification_type
+            self._notification_type = config.get("notification_type") or "Subscribe"
             self._history_limit = max(100, min(self.__safe_int(config.get("history_limit"), 1000), 5000))
 
         if self._onlyonce:
@@ -400,8 +399,8 @@ class DailyRecommend(_PluginBase):
                                         "model": "notification_type",
                                         "label": "通知类型",
                                         "items": [
-                                            {"title": "插件", "value": "Plugin"},
                                             {"title": "订阅", "value": "Subscribe"},
+                                            {"title": "插件", "value": "Plugin"},
                                             {"title": "手动处理", "value": "Manual"},
                                             {"title": "其它", "value": "Other"}
                                         ]
@@ -431,7 +430,7 @@ class DailyRecommend(_PluginBase):
             "exclude_recommended": True,
             "exclude_subscribed": True,
             "exclude_exists": True,
-            "notification_type": "Plugin",
+            "notification_type": "Subscribe",
             "history_limit": 1000
         }
 
@@ -1043,7 +1042,7 @@ class DailyRecommend(_PluginBase):
         return list(episodes or [])
 
     def __notification_type(self):
-        value = self._notification_type or "Plugin"
+        value = self._notification_type or "Subscribe"
         if isinstance(value, NotificationType):
             return value
         if hasattr(NotificationType, str(value)):
@@ -1051,7 +1050,7 @@ class DailyRecommend(_PluginBase):
         for item in NotificationType:
             if item.name == value or item.value == value:
                 return item
-        return NotificationType.Plugin
+        return NotificationType.Subscribe
 
     def __tmdb_get(self, path: str, params: Dict[str, Any]) -> Dict[str, Any]:
         token = self._tmdb_token
