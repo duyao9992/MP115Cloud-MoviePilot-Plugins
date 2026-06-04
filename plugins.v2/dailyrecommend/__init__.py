@@ -22,7 +22,7 @@ class DailyRecommend(_PluginBase):
     plugin_name = "每日推荐"
     plugin_desc = "根据偏好每天推荐一部电影或电视剧，微信回复 1 订阅、2 换一部、3 今日跳过。"
     plugin_icon = "Moviepilot_A.png"
-    plugin_version = "0.1.1"
+    plugin_version = "0.1.2"
     plugin_author = "heiyingsky"
     author_url = "https://github.com/heiyingsky"
     plugin_config_prefix = "dailyrecommend_"
@@ -131,6 +131,7 @@ class DailyRecommend(_PluginBase):
 
         if self._onlyonce:
             self._onlyonce = False
+            self.__save_last_result(True, "正在执行立即推荐...", status="running")
             self.__update_config()
             self.recommend(force=True)
 
@@ -388,10 +389,18 @@ class DailyRecommend(_PluginBase):
                 }
             })
         if last_result:
+            status = last_result.get("status")
+            alert_type = "info"
+            if status == "running":
+                alert_type = "info"
+            elif last_result.get("success"):
+                alert_type = "success"
+            else:
+                alert_type = "error"
             content.append({
                 "component": "VAlert",
                 "props": {
-                    "type": "success" if last_result.get("success") else "error",
+                    "type": alert_type,
                     "variant": "tonal",
                     "text": f"最近执行：{last_result.get('time') or '-'}，{last_result.get('message') or '-'}"
                 }
@@ -437,6 +446,16 @@ class DailyRecommend(_PluginBase):
             self.__save_last_result(False, message)
             self.__post(title="每日推荐配置缺失", text=message, channel=channel, userid=userid)
             return {"success": False, "message": message}
+
+        logger.info(
+            "每日推荐开始执行："
+            f"force={force}, media_type={self._media_type}, language_pref={self._language_pref}, "
+            f"genres={self._genres}, year={self._year_start}-{self._year_end or '不限'}, "
+            f"min_vote={self._min_vote}, min_vote_count={self._min_vote_count}, max_pages={self._max_pages}, "
+            f"exclude_recommended={self._exclude_recommended}, exclude_subscribed={self._exclude_subscribed}, "
+            f"exclude_exists={self._exclude_exists}"
+        )
+        self.__save_last_result(True, "正在执行推荐筛选...", status="running")
 
         today = self.__today()
         if not force:
@@ -511,19 +530,28 @@ class DailyRecommend(_PluginBase):
         if exclude_key:
             history_keys.add(exclude_key)
 
+        logger.info(f"每日推荐候选类型顺序：{media_types}")
         for media_type in media_types:
             candidates = self.__discover(media_type)
+            logger.info(f"每日推荐 {media_type} 候选数量：{len(candidates)}")
             for item in candidates:
                 key = f"{media_type}:{item.get('id')}"
                 if key in history_keys:
+                    logger.info(f"每日推荐跳过已推荐候选：{item.get('title') or item.get('name')} ({key})")
                     continue
                 if self._language_pref == "foreign" and item.get("original_language") == "zh":
+                    logger.info(f"每日推荐跳过中文原语种候选：{item.get('title') or item.get('name')}")
                     continue
                 candidate = self.__build_candidate(media_type, item)
                 if not candidate:
+                    logger.info(f"每日推荐跳过无标题候选：{item}")
                     continue
                 if self.__should_skip_by_moviepilot(candidate):
                     continue
+                logger.info(
+                    f"每日推荐命中候选：{candidate.get('title')} "
+                    f"({candidate.get('year') or '-'}) tmdb={candidate.get('tmdbid')}"
+                )
                 return candidate
         return None
 
@@ -533,8 +561,14 @@ class DailyRecommend(_PluginBase):
         seen = set()
         for page in range(1, self._max_pages + 1):
             params = self.__discover_params(media_type, page)
+            logger.info(f"每日推荐请求 TMDb：type={media_type}, page={page}")
             data = self.__tmdb_get(endpoint, params)
-            for item in data.get("results") or []:
+            results = data.get("results") or []
+            logger.info(
+                f"每日推荐 TMDb 返回：type={media_type}, page={page}, "
+                f"results={len(results)}, total_pages={data.get('total_pages')}"
+            )
+            for item in results:
                 item_id = item.get("id")
                 if not item_id or item_id in seen:
                     continue
@@ -646,6 +680,7 @@ class DailyRecommend(_PluginBase):
                     return True
             except Exception as err:
                 logger.warn(f"{mediainfo.title_year} 入库状态检查失败：{err}")
+        logger.info(f"{mediainfo.title_year} 未订阅/未入库，作为可推荐候选")
         return False
 
     def __subscribe_active(self, active: Dict[str, Any], channel: Any = None, userid: Any = None):
@@ -758,10 +793,11 @@ class DailyRecommend(_PluginBase):
             history = history[-self._history_limit:]
         self.save_data("history", history)
 
-    def __save_last_result(self, success: bool, message: str):
+    def __save_last_result(self, success: bool, message: str, status: Optional[str] = None):
         self.save_data("last_result", {
             "success": bool(success),
             "message": message,
+            "status": status or ("success" if success else "error"),
             "time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         })
 
