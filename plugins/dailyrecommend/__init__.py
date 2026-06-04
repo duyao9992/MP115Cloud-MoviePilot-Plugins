@@ -1,10 +1,14 @@
 import datetime
+import html
 import math
 import random
 import re
+import secrets
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlencode
 
 from apscheduler.triggers.cron import CronTrigger
+from fastapi.responses import HTMLResponse
 
 from app.chain.download import DownloadChain
 from app.chain.subscribe import SubscribeChain
@@ -21,9 +25,9 @@ from app.utils.http import RequestUtils
 
 class DailyRecommend(_PluginBase):
     plugin_name = "每日推荐"
-    plugin_desc = "根据偏好每天推荐一部电影或电视剧，微信发送 /每日要 订阅、/每日换 换一部、/每日跳 跳过。"
+    plugin_desc = "根据偏好每天推荐一部电影或电视剧，微信卡片支持点击链接订阅、换一部和跳过。"
     plugin_icon = "Moviepilot_A.png"
-    plugin_version = "0.1.13"
+    plugin_version = "0.1.14"
     plugin_author = "heiyingsky"
     author_url = "https://github.com/heiyingsky"
     plugin_config_prefix = "dailyrecommend_"
@@ -50,6 +54,7 @@ class DailyRecommend(_PluginBase):
     _exclude_exists = True
     _notification_type = "Subscribe"
     _history_limit = 1000
+    _action_link_base = ""
 
     _genre_options = [
         {"title": "动作", "value": "action"},
@@ -133,6 +138,7 @@ class DailyRecommend(_PluginBase):
             self._exclude_exists = bool(config.get("exclude_exists", True))
             self._notification_type = config.get("notification_type") or "Subscribe"
             self._history_limit = max(100, min(self.__safe_int(config.get("history_limit"), 1000), 5000))
+            self._action_link_base = (config.get("action_link_base") or "").strip()
 
         if self._onlyonce:
             self._onlyonce = False
@@ -212,6 +218,13 @@ class DailyRecommend(_PluginBase):
                 "methods": ["GET"],
                 "auth": "bear",
                 "summary": "清空每日推荐历史"
+            },
+            {
+                "path": "/action",
+                "endpoint": self.action_from_link,
+                "methods": ["GET"],
+                "allow_anonymous": True,
+                "summary": "每日推荐链接操作"
             }
         ]
 
@@ -270,6 +283,40 @@ class DailyRecommend(_PluginBase):
                                             {"title": f"{hour:02d}:00", "value": hour}
                                             for hour in range(24)
                                         ]
+                                    }
+                                }]
+                            }
+                        ]
+                    },
+                    {
+                        "component": "VRow",
+                        "content": [
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12},
+                                "content": [{
+                                    "component": "VTextField",
+                                    "props": {
+                                        "model": "action_link_base",
+                                        "label": "点击链接访问地址（可空）",
+                                        "placeholder": "例如 http://192.168.1.10:3000；留空则使用 MoviePilot APP_DOMAIN"
+                                    }
+                                }]
+                            }
+                        ]
+                    },
+                    {
+                        "component": "VRow",
+                        "content": [
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12},
+                                "content": [{
+                                    "component": "VAlert",
+                                    "props": {
+                                        "type": "info",
+                                        "variant": "tonal",
+                                        "text": "微信 ClawBot 会优先拦截普通文字和数字回复；建议使用推荐卡片里的点击链接。链接地址必须是手机能访问到的 MoviePilot 地址。"
                                     }
                                 }]
                             }
@@ -452,7 +499,8 @@ class DailyRecommend(_PluginBase):
             "exclude_subscribed": True,
             "exclude_exists": True,
             "notification_type": "Subscribe",
-            "history_limit": 1000
+            "history_limit": 1000,
+            "action_link_base": ""
         }
 
     def get_page(self) -> List[dict]:
@@ -492,7 +540,7 @@ class DailyRecommend(_PluginBase):
                 "props": {
                     "type": "success",
                     "variant": "tonal",
-                    "text": f"当前推荐：{active.get('title')}，微信发送命令：/每日要 订阅 / /每日换 换一部 / /每日跳 跳过。"
+                    "text": f"当前推荐：{active.get('title')}，微信推荐卡片可点击链接操作。"
                 }
             })
         content.append({
@@ -513,6 +561,22 @@ class DailyRecommend(_PluginBase):
         self.del_data("active")
         self.del_data("skip_date")
         return {"success": True, "message": "每日推荐历史已清空"}
+
+    def action_from_link(self, action: str = "", key: str = ""):
+        action = (action or "").strip().lower()
+        if key != self.__action_key():
+            return self.__html_response("每日推荐", "链接校验失败，已拒绝执行。")
+        if action not in {"subscribe", "change", "skip"}:
+            return self.__html_response("每日推荐", "链接动作无效。")
+
+        active = self.get_data("active") or {}
+        if not active:
+            return self.__html_response("每日推荐", "当前没有可操作的推荐。")
+
+        logger.info(f"每日推荐收到链接动作：action={action}, title={active.get('title')}")
+        self.__handle_action(action, active=active)
+        labels = {"subscribe": "订阅", "change": "换一部", "skip": "跳过"}
+        return self.__html_response("每日推荐", f"已执行：{labels.get(action, action)}。可以返回微信查看结果。")
 
     def recommend(
         self,
@@ -900,6 +964,7 @@ class DailyRecommend(_PluginBase):
     def __post_recommendation(self, item: Dict[str, Any], channel: Any = None, userid: Any = None):
         mtype = "电影" if item.get("media_type") == "movie" else "电视剧"
         title = f"今日推荐：{item.get('title')}"
+        links = self.__action_links()
 
         lines = [
             f"类型：{mtype}",
@@ -908,10 +973,19 @@ class DailyRecommend(_PluginBase):
             f"主演：{self.__cast_text(item.get('cast'))}",
             f"简介：{self.__core_overview(item.get('overview'))}",
             "",
-            "发送 /每日要：订阅",
-            "发送 /每日换：换一部",
-            "发送 /每日跳：跳过"
+            "点击链接操作："
         ]
+        if links:
+            lines.extend([
+                f"订阅：{links['subscribe']}",
+                f"换一部：{links['change']}",
+                f"跳过：{links['skip']}"
+            ])
+        else:
+            lines.extend([
+                "点击链接未启用。",
+                "请在插件配置填写“点击链接访问地址”，或配置 MoviePilot APP_DOMAIN。"
+            ])
         buttons = [
             [
                 {"text": "订阅", "callback_data": f"[PLUGIN]{self.__class__.__name__}|subscribe"},
@@ -1146,8 +1220,50 @@ class DailyRecommend(_PluginBase):
             "exclude_subscribed": self._exclude_subscribed,
             "exclude_exists": self._exclude_exists,
             "notification_type": self._notification_type,
-            "history_limit": self._history_limit
+            "history_limit": self._history_limit,
+            "action_link_base": self._action_link_base
         })
+
+    def __action_links(self) -> Dict[str, str]:
+        base = self.__action_base_url()
+        if not base:
+            return {}
+        path = f"{settings.API_V1_STR}/plugin/{self.__class__.__name__}/action"
+        key = self.__action_key()
+        return {
+            action: f"{base.rstrip('/')}{path}?{urlencode({'action': action, 'key': key})}"
+            for action in ("subscribe", "change", "skip")
+        }
+
+    def __action_base_url(self) -> str:
+        base = (self._action_link_base or settings.APP_DOMAIN or "").strip()
+        if not base:
+            return ""
+        if not base.lower().startswith(("http://", "https://")):
+            base = f"http://{base}"
+        return base.rstrip("/")
+
+    def __action_key(self) -> str:
+        key = self.get_data("action_key")
+        if not key:
+            key = secrets.token_urlsafe(24)
+            self.save_data("action_key", key)
+        return str(key)
+
+    @staticmethod
+    def __html_response(title: str, message: str) -> HTMLResponse:
+        content = (
+            "<!doctype html><html><head><meta charset='utf-8'>"
+            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+            f"<title>{html.escape(title)}</title>"
+            "<style>body{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;"
+            "padding:32px;line-height:1.6;color:#222}.box{max-width:560px;margin:auto;"
+            "border:1px solid #ddd;border-radius:12px;padding:24px}</style>"
+            "</head><body><div class='box'>"
+            f"<h2>{html.escape(title)}</h2><p>{html.escape(message)}</p>"
+            "</div></body></html>"
+        )
+        return HTMLResponse(content=content)
 
     @staticmethod
     def __safe_int(value: Any, default: int) -> int:
