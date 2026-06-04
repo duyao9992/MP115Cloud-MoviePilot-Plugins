@@ -21,9 +21,9 @@ from app.utils.http import RequestUtils
 
 class DailyRecommend(_PluginBase):
     plugin_name = "每日推荐"
-    plugin_desc = "根据偏好每天推荐一部电影或电视剧，微信回复 1 订阅、2 换一部、3 今日跳过。"
+    plugin_desc = "根据偏好每天推荐一部电影或电视剧，微信回复订阅、换、跳过。"
     plugin_icon = "Moviepilot_A.png"
-    plugin_version = "0.1.6"
+    plugin_version = "0.1.7"
     plugin_author = "heiyingsky"
     author_url = "https://github.com/heiyingsky"
     plugin_config_prefix = "dailyrecommend_"
@@ -48,7 +48,7 @@ class DailyRecommend(_PluginBase):
     _exclude_recommended = True
     _exclude_subscribed = True
     _exclude_exists = True
-    _notification_type = "Subscribe"
+    _notification_type = "Plugin"
     _history_limit = 1000
 
     _genre_options = [
@@ -131,7 +131,8 @@ class DailyRecommend(_PluginBase):
             self._exclude_recommended = bool(config.get("exclude_recommended", True))
             self._exclude_subscribed = bool(config.get("exclude_subscribed", True))
             self._exclude_exists = bool(config.get("exclude_exists", True))
-            self._notification_type = config.get("notification_type") or "Subscribe"
+            notification_type = config.get("notification_type")
+            self._notification_type = "Plugin" if notification_type in (None, "", "Subscribe", "订阅") else notification_type
             self._history_limit = max(100, min(self.__safe_int(config.get("history_limit"), 1000), 5000))
 
         if self._onlyonce:
@@ -399,8 +400,8 @@ class DailyRecommend(_PluginBase):
                                         "model": "notification_type",
                                         "label": "通知类型",
                                         "items": [
-                                            {"title": "订阅", "value": "Subscribe"},
                                             {"title": "插件", "value": "Plugin"},
+                                            {"title": "订阅", "value": "Subscribe"},
                                             {"title": "手动处理", "value": "Manual"},
                                             {"title": "其它", "value": "Other"}
                                         ]
@@ -430,7 +431,7 @@ class DailyRecommend(_PluginBase):
             "exclude_recommended": True,
             "exclude_subscribed": True,
             "exclude_exists": True,
-            "notification_type": "Subscribe",
+            "notification_type": "Plugin",
             "history_limit": 1000
         }
 
@@ -471,7 +472,7 @@ class DailyRecommend(_PluginBase):
                 "props": {
                     "type": "success",
                     "variant": "tonal",
-                    "text": f"当前推荐：{active.get('title')}，微信回复 1 订阅、2 换一部、3 今日跳过。"
+                    "text": f"当前推荐：{active.get('title')}，微信回复：订阅 / 换 / 跳过。"
                 }
             })
         content.append({
@@ -887,9 +888,7 @@ class DailyRecommend(_PluginBase):
             f"主演：{self.__cast_text(item.get('cast'))}",
             f"简介：{self.__core_overview(item.get('overview'))}",
             "",
-            "回复 1：订阅",
-            "回复 2：换一部",
-            "回复 3：今日跳过"
+            "回复：订阅 / 换 / 跳过"
         ]
         buttons = [
             [
@@ -1044,7 +1043,7 @@ class DailyRecommend(_PluginBase):
         return list(episodes or [])
 
     def __notification_type(self):
-        value = self._notification_type or "Subscribe"
+        value = self._notification_type or "Plugin"
         if isinstance(value, NotificationType):
             return value
         if hasattr(NotificationType, str(value)):
@@ -1052,7 +1051,7 @@ class DailyRecommend(_PluginBase):
         for item in NotificationType:
             if item.name == value or item.value == value:
                 return item
-        return NotificationType.Subscribe
+        return NotificationType.Plugin
 
     def __tmdb_get(self, path: str, params: Dict[str, Any]) -> Dict[str, Any]:
         token = self._tmdb_token
@@ -1189,11 +1188,11 @@ class DailyRecommend(_PluginBase):
             return None
         value = value.translate(str.maketrans({"１": "1", "２": "2", "３": "3"}))
         lower = value.lower().strip()
-        if lower.startswith("/dailyrecommend_subscribe") or lower in {"1", "订阅", "subscribe"}:
+        if lower.startswith("/dailyrecommend_subscribe") or lower in {"1", "订阅", "加入订阅", "subscribe"}:
             return "subscribe"
-        if lower.startswith("/dailyrecommend_change") or lower in {"2", "换一部", "换一个", "换部", "change"}:
+        if lower.startswith("/dailyrecommend_change") or lower in {"2", "换", "换一部", "换一个", "换部", "下一部", "再来", "change"}:
             return "change"
-        if lower.startswith("/dailyrecommend_skip") or lower in {"3", "今日跳过", "跳过", "skip"}:
+        if lower.startswith("/dailyrecommend_skip") or lower in {"3", "跳", "今日跳过", "跳过", "skip"}:
             return "skip"
 
         match = re.match(r"^(?:回复\s*)?([123])(?:\s|$|[：:，,。.！!])", value)
@@ -1211,7 +1210,7 @@ class DailyRecommend(_PluginBase):
         return " / ".join(names[:3]) if names else "-"
 
     @classmethod
-    def __core_overview(cls, value: Optional[str], limit: int = 110) -> str:
+    def __core_overview(cls, value: Optional[str], limit: int = 70) -> str:
         text = " ".join(str(value or "").split())
         if not text:
             return "暂无简介。"
