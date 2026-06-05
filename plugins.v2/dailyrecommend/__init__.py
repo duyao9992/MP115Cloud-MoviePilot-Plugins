@@ -23,7 +23,7 @@ class DailyRecommend(_PluginBase):
     plugin_name = "每日推荐"
     plugin_desc = "根据偏好每天推荐一部电影或电视剧，使用 MoviePilot 原生通知命令订阅、换一部或跳过。"
     plugin_icon = "Moviepilot_A.png"
-    plugin_version = "0.2.1"
+    plugin_version = "0.2.2"
     plugin_author = "heiyingsky"
     author_url = "https://github.com/heiyingsky"
     plugin_config_prefix = "dailyrecommend_"
@@ -467,7 +467,7 @@ class DailyRecommend(_PluginBase):
                 "props": {
                     "type": "success",
                     "variant": "tonal",
-                    "text": f"当前推荐：{active.get('title')}；微信回复 /1 订阅、/2 换一部、/3 跳过。"
+                    "text": f"当前推荐：{active.get('title')}；回复 /1 订阅，回复 /2 换一部，回复 /3 今日跳过。"
                 }
             })
         content.append({
@@ -892,11 +892,13 @@ class DailyRecommend(_PluginBase):
             f"主演：{self.__cast_text(item.get('cast'))}",
             f"简介：{self.__core_overview(item.get('overview'))}",
             "",
-            "回复 /1：订阅",
-            "回复 /2：换一部",
-            "回复 /3：跳过",
+            "请按下面任意一条回复：",
             "",
-            "备用：/要 /换 /跳"
+            "回复 /1  订阅这部",
+            "回复 /2  换一部推荐",
+            "回复 /3  今天先跳过",
+            "",
+            "高端玩家祝你观影愉快"
         ]
         buttons = [
             [
