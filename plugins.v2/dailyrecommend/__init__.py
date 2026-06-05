@@ -23,9 +23,9 @@ class DailyRecommend(_PluginBase):
     plugin_name = "每日推荐"
     plugin_desc = "根据偏好每天推荐一部电影或电视剧，使用 MoviePilot 原生通知命令订阅、换一部或跳过。"
     plugin_icon = "Moviepilot_A.png"
-    plugin_version = "0.2.2"
-    plugin_author = "heiyingsky"
-    author_url = "https://github.com/heiyingsky"
+    plugin_version = "0.2.3"
+    plugin_author = "高端玩家定制"
+    author_url = "https://github.com/duyao9992"
     plugin_config_prefix = "dailyrecommend_"
     plugin_order = 32
     auth_level = 1
