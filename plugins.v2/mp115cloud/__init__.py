@@ -29,7 +29,7 @@ class MP115Cloud(_PluginBase):
     plugin_name = "115 云下载接管"
     plugin_desc = "订阅下载前搜索非公开搜索页，成功提交到 115 离线任务后拦截原下载，失败自动回落 MoviePilot 正常流程。"
     plugin_icon = ""
-    plugin_version = "1.0.9"
+    plugin_version = "1.0.10"
     plugin_author = "Codex"
     author_url = "https://github.com/jxxghp/MoviePilot-Plugins"
     plugin_config_prefix = "mp115cloud_"
@@ -1045,27 +1045,39 @@ class MP115Cloud(_PluginBase):
         meta = getattr(context, "meta_info", None)
         torrent = getattr(context, "torrent_info", None)
         subscribe = self._subscribe_from_event(event_data)
+        subscribe_info = self._parse_subscribe_origin(getattr(event_data, "origin", "") or "")
         episodes = sorted(getattr(event_data, "episodes", None) or getattr(meta, "episode_list", None) or [])
         season_list = getattr(meta, "season_list", None) or []
         subscribe_title = self._first(
             getattr(subscribe, "keyword", None),
             getattr(subscribe, "name", None),
+            subscribe_info.get("keyword"),
+            subscribe_info.get("name"),
+            subscribe_info.get("title"),
         )
+        media_title_raw = self._first(getattr(media, "title", None), getattr(media, "name", None))
+        meta_title_raw = getattr(meta, "title", None)
+        torrent_title_raw = getattr(torrent, "title", None)
         base_title = self._first(
-            getattr(media, "title", None),
-            getattr(media, "name", None),
-            getattr(meta, "title", None),
             subscribe_title,
-            getattr(torrent, "title", None),
+            self._clean_release_title_for_search(media_title_raw),
+            self._clean_release_title_for_search(meta_title_raw),
+            self._clean_release_title_for_search(torrent_title_raw),
+            media_title_raw,
+            meta_title_raw,
+            torrent_title_raw,
         )
         torrent_title = self._first(getattr(torrent, "title", None), getattr(meta, "org_string", None), base_title)
-        year = self._first(getattr(media, "year", None), getattr(subscribe, "year", None), "")
+        year = self._first(getattr(media, "year", None), getattr(subscribe, "year", None), subscribe_info.get("year"), "")
         season = season_list[0] if season_list else self._first(
             getattr(media, "season", None),
             getattr(meta, "season", None),
             getattr(subscribe, "season", None),
+            subscribe_info.get("season"),
             self._season_from_text(subscribe_title),
             self._season_from_text(base_title),
+            self._season_from_text(media_title_raw),
+            self._season_from_text(meta_title_raw),
             self._season_from_text(torrent_title),
         )
         episode = episodes[0] if episodes else ""
@@ -1076,21 +1088,26 @@ class MP115Cloud(_PluginBase):
         search_title = self._tv_search_title(base_title, subscribe_title, season_number) if is_tv else base_title
         # 搜索站点第一步是影片检索，不是 PT 种子检索；匹配目标也以媒体标题为准。
         title_candidates = self._collect_title_candidates(media, meta)
-        for value in (base_title, subscribe_title):
+        for value in (base_title, subscribe_title, media_title_raw, meta_title_raw, torrent_title_raw):
+            cleaned = self._clean_release_title_for_search(value)
+            if cleaned:
+                title_candidates.append(cleaned)
             stripped = self._strip_tv_season_marker(value)
             if stripped:
                 title_candidates.append(stripped)
         title_candidates = self._dedupe_title_values(title_candidates)
+        target_year = "" if is_tv else year
         target_titles = [
-            " ".join(str(v) for v in [item, year] if v)
+            " ".join(str(v) for v in [item, target_year] if v)
             for item in title_candidates
-        ] or [" ".join(str(v) for v in [self._strip_tv_season_marker(base_title) or base_title, year] if v)]
+        ] or [" ".join(str(v) for v in [self._strip_tv_season_marker(base_title) or base_title, target_year] if v)]
         target_title = " || ".join(target_titles)
         return {
             "keyword": "",
             "raw_keyword": "",
             "title": str(search_title or ""),
             "media_title": str(base_title or ""),
+            "subscribe_title": str(subscribe_title or ""),
             "search_title": str(search_title or ""),
             "target_title": target_title,
             "torrent_title": str(torrent_title or ""),
@@ -2599,6 +2616,9 @@ class MP115Cloud(_PluginBase):
         seen = {keyword}
         for item in variants:
             item = (item or "").strip()
+            cleaned_item = MP115Cloud._clean_release_title_for_search(item) if MP115Cloud._looks_like_release_title(item) else ""
+            if cleaned_item and MP115Cloud._normalize_title(cleaned_item) != MP115Cloud._normalize_title(item):
+                item = cleaned_item
             if not item or item in seen:
                 continue
             seen.add(item)
@@ -2616,6 +2636,7 @@ class MP115Cloud(_PluginBase):
         values = template_values or {}
         bases: List[str] = []
         for value in (
+            values.get("subscribe_title"),
             values.get("media_title"),
             values.get("search_title"),
             values.get("title"),
@@ -2644,13 +2665,64 @@ class MP115Cloud(_PluginBase):
 
     @staticmethod
     def _tv_keyword_base(value: Any) -> str:
-        text = str(value or "").strip()
+        text = MP115Cloud._clean_release_title_for_search(value) or str(value or "").strip()
         if not text:
             return ""
         text = MP115Cloud._strip_tv_season_marker(text)
         text = re.sub(r"\b(?:19|20)\d{2}\b", " ", text)
         text = re.sub(r"\s+", " ", text).strip(" -_./|")
         return text
+
+    @staticmethod
+    def _clean_release_title_for_search(value: Any) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        chinese_prefix = re.match(
+            r"\s*([\u4e00-\u9fff][\u4e00-\u9fffA-Za-z0-9·・:：\- ]{1,40}?)(?=$|[\[【(（._\s])",
+            text,
+        )
+        if chinese_prefix:
+            prefix = re.sub(r"\s+", " ", chinese_prefix.group(1)).strip(" -_./|")
+            if prefix and MP115Cloud._normalize_title(prefix) not in {
+                "中文字幕",
+                "中字",
+                "简繁英字幕",
+                "国语配音中文字幕",
+                "杜比视界",
+            }:
+                return MP115Cloud._strip_tv_season_marker(prefix) or prefix
+        cleaned = re.sub(r"[\[\]【】()（）]", " ", text)
+        cleaned = re.sub(r"[._]+", " ", cleaned)
+        cleaned = re.sub(r"@[\w.-]+$", "", cleaned)
+        parts = re.split(
+            r"\b(?:"
+            r"S\d{1,2}(?:E\d{1,3})?|Season\s*\d{1,2}|"
+            r"(?:19|20)\d{2}|2160p|1080p|720p|4k|uhd|"
+            r"web[- ]?dl|webrip|blu[- ]?ray|hdtv|"
+            r"h\.?26[45]|x26[45]|hevc|avc|aac|ddp\d*(?:\.\d)?|atmos|"
+            r"dolby|vision|dv|hdr|complete|repack|proper|pure|hdsweb|blacktv|colortv|colorweb"
+            r")\b",
+            cleaned,
+            maxsplit=1,
+            flags=re.I,
+        )
+        cleaned = parts[0] if parts else cleaned
+        cleaned = re.sub(r"\s+", " ", cleaned).strip(" -_./|")
+        return cleaned
+
+    @staticmethod
+    def _looks_like_release_title(value: Any) -> bool:
+        text = str(value or "")
+        return bool(re.search(
+            r"@[\w.-]+$|[._].*[._]|\b("
+            r"2160p|1080p|720p|4k|uhd|web[- .]?dl|webrip|blu[- .]?ray|hdtv|"
+            r"h\.?26[45]|x26[45]|hevc|avc|ddp\d*(?:\.\d)?|atmos|dv|hdr|"
+            r"complete|repack|proper|hdsweb|blacktv|colortv|colorweb"
+            r")\b",
+            text,
+            re.I,
+        ))
 
     @staticmethod
     def _series_part_label(value: Any) -> str:
@@ -2818,12 +2890,15 @@ class MP115Cloud(_PluginBase):
         base = str(base_title or "").strip()
         subscribed = str(subscribe_title or "").strip()
         if not season:
-            return base or subscribed
+            return subscribed or base
         if subscribed and MP115Cloud._season_from_text(subscribed) == season:
             return subscribed
+        clean_subscribed = MP115Cloud._strip_tv_season_marker(subscribed)
+        if clean_subscribed:
+            return f"{clean_subscribed} S{season:02d}".strip()
         if base and MP115Cloud._season_from_text(base) == season:
             return base
-        clean_base = MP115Cloud._strip_tv_season_marker(base) or MP115Cloud._strip_tv_season_marker(subscribed)
+        clean_base = MP115Cloud._strip_tv_season_marker(base)
         clean_base = clean_base or base or subscribed
         return f"{clean_base} S{season:02d}".strip()
 
@@ -2884,14 +2959,14 @@ class MP115Cloud(_PluginBase):
         if target_season and seasons:
             if seasons != {target_season}:
                 return False
-        if target_season and not seasons:
-            return False
         if MP115Cloud._has_multi_season_marker(title):
             return False
         if MP115Cloud._has_partial_episode_range_marker(title):
             return False
         if MP115Cloud._has_single_episode_marker(title):
             return False
+        if target_season and not seasons:
+            return target_season == 1 and MP115Cloud._has_full_season_marker(title)
         return bool(seasons or MP115Cloud._has_full_season_marker(title))
 
     @staticmethod
@@ -2899,6 +2974,8 @@ class MP115Cloud(_PluginBase):
         if not target_season:
             return False
         seasons = MP115Cloud._tv_title_seasons(title)
+        if not seasons and target_season == 1:
+            return not MP115Cloud._has_multi_season_marker(title)
         return seasons == {target_season}
 
     @staticmethod
