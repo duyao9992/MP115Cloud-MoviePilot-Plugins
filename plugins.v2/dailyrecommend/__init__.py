@@ -21,9 +21,9 @@ from app.utils.http import RequestUtils
 
 class DailyRecommend(_PluginBase):
     plugin_name = "每日推荐"
-    plugin_desc = "根据偏好每天推荐一部电影或电视剧，使用 MoviePilot 原生通知命令订阅、换一部或跳过。"
+    plugin_desc = "根据偏好每天推荐电影、电视剧或动漫，使用 MoviePilot 原生通知命令订阅、换一部或跳过。"
     plugin_icon = "Moviepilot_A.png"
-    plugin_version = "0.2.3"
+    plugin_version = "0.2.4"
     plugin_author = "高端玩家定制"
     author_url = "https://github.com/duyao9992"
     plugin_config_prefix = "dailyrecommend_"
@@ -37,6 +37,9 @@ class DailyRecommend(_PluginBase):
     _recommend_hour = 9
     _tmdb_token = ""
     _media_type = "mixed"
+    _enable_movie = True
+    _enable_tv = True
+    _enable_anime = False
     _language_pref = "any"
     _language = "zh-CN"
     _genres: List[str] = []
@@ -119,7 +122,8 @@ class DailyRecommend(_PluginBase):
             self._recommend_hour = self.__parse_recommend_hour(config)
             self._cron = f"0 {self._recommend_hour} * * *"
             self._tmdb_token = (config.get("tmdb_token") or "").strip()
-            self._media_type = config.get("media_type") or "mixed"
+            self._enable_movie, self._enable_tv, self._enable_anime = self.__content_switches_from_config(config)
+            self._media_type = self.__media_type_from_switches()
             self._language_pref = config.get("language_pref") or "any"
             self._language = config.get("language") or "zh-CN"
             self._genres = config.get("genres") or []
@@ -255,7 +259,7 @@ class DailyRecommend(_PluginBase):
                         "content": [
                             {
                                 "component": "VCol",
-                                "props": {"cols": 12, "md": 6},
+                                "props": {"cols": 12, "md": 3},
                                 "content": [{
                                     "component": "VTextField",
                                     "props": {
@@ -267,18 +271,26 @@ class DailyRecommend(_PluginBase):
                             },
                             {
                                 "component": "VCol",
-                                "props": {"cols": 12, "md": 3},
+                                "props": {"cols": 12, "md": 2},
                                 "content": [{
-                                    "component": "VSelect",
-                                    "props": {
-                                        "model": "media_type",
-                                        "label": "推荐内容",
-                                        "items": [
-                                            {"title": "电影", "value": "movie"},
-                                            {"title": "电视剧", "value": "tv"},
-                                            {"title": "电影和电视剧", "value": "mixed"}
-                                        ]
-                                    }
+                                    "component": "VSwitch",
+                                    "props": {"model": "enable_movie", "label": "推荐电影"}
+                                }]
+                            },
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12, "md": 2},
+                                "content": [{
+                                    "component": "VSwitch",
+                                    "props": {"model": "enable_tv", "label": "推荐电视剧"}
+                                }]
+                            },
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12, "md": 2},
+                                "content": [{
+                                    "component": "VSwitch",
+                                    "props": {"model": "enable_anime", "label": "推荐动漫"}
                                 }]
                             },
                             {
@@ -415,6 +427,9 @@ class DailyRecommend(_PluginBase):
             "recommend_hour": 9,
             "tmdb_token": "",
             "media_type": "mixed",
+            "enable_movie": True,
+            "enable_tv": True,
+            "enable_anime": False,
             "language_pref": "any",
             "language": "zh-CN",
             "genres": [],
@@ -496,6 +511,14 @@ class DailyRecommend(_PluginBase):
         userid: Any = None,
         exclude_key: Optional[str] = None
     ) -> Dict[str, Any]:
+        enabled_media_types = self.__enabled_media_types()
+        if not enabled_media_types:
+            message = "未启用任何推荐类型，请至少开启电影、电视剧或动漫之一。"
+            logger.warn(message)
+            self.__save_last_result(False, message)
+            self.__post(title="每日推荐配置缺失", text=message, channel=channel, userid=userid)
+            return {"success": False, "message": message}
+
         if not self._tmdb_token:
             message = "每日推荐未配置 TMDb Read Access Token"
             logger.error(message)
@@ -505,7 +528,7 @@ class DailyRecommend(_PluginBase):
 
         logger.info(
             "每日推荐开始执行："
-            f"force={force}, media_type={self._media_type}, language_pref={self._language_pref}, "
+            f"force={force}, media_types={enabled_media_types}, language_pref={self._language_pref}, "
             f"genres={self._genres}, year={self._year_start}-{self._year_end or '不限'}, "
             f"min_vote={self._min_vote}, min_vote_count={self._min_vote_count}, max_pages={self._max_pages}, "
             f"exclude_recommended={self._exclude_recommended}, exclude_subscribed={self._exclude_subscribed}, "
@@ -623,18 +646,21 @@ class DailyRecommend(_PluginBase):
         logger.info(f"每日推荐候选类型顺序：{media_types}")
         for media_type in media_types:
             candidates = self.__discover(media_type, max_pages=max_pages)
-            logger.info(f"每日推荐 {media_type} 候选数量：{len(candidates)}")
+            logger.info(f"每日推荐 {self.__media_type_label(media_type)} 候选数量：{len(candidates)}")
             for item in candidates:
-                key = f"{media_type}:{item.get('id')}"
-                if key in history_keys:
-                    logger.info(f"每日推荐跳过已推荐候选：{item.get('title') or item.get('name')} ({key})")
-                    continue
                 if self._language_pref == "foreign" and item.get("original_language") == "zh":
                     logger.info(f"每日推荐跳过中文原语种候选：{item.get('title') or item.get('name')}")
                     continue
                 candidate = self.__build_candidate(media_type, item)
                 if not candidate:
                     logger.info(f"每日推荐跳过无标题候选：{item}")
+                    continue
+                candidate_keys = self.__candidate_history_keys(candidate)
+                if history_keys & candidate_keys:
+                    logger.info(
+                        f"每日推荐跳过已推荐候选：{candidate.get('title')} "
+                        f"({','.join(sorted(candidate_keys & history_keys))})"
+                    )
                     continue
                 if self.__should_skip_by_moviepilot(candidate):
                     continue
@@ -647,27 +673,35 @@ class DailyRecommend(_PluginBase):
         return None
 
     def __discover(self, media_type: str, max_pages: Optional[int] = None) -> List[dict]:
-        endpoint = "/discover/movie" if media_type == "movie" else "/discover/tv"
         candidates = []
         seen = set()
         page_limit = max(1, min(self.__safe_int(max_pages, self._max_pages), 20))
-        for page in range(1, page_limit + 1):
-            params = self.__discover_params(media_type, page)
-            logger.info(f"每日推荐请求 TMDb：type={media_type}, page={page}")
-            data = self.__tmdb_get(endpoint, params)
-            results = data.get("results") or []
-            logger.info(
-                f"每日推荐 TMDb 返回：type={media_type}, page={page}, "
-                f"results={len(results)}, total_pages={data.get('total_pages')}"
-            )
-            for item in results:
-                item_id = item.get("id")
-                if not item_id or item_id in seen:
-                    continue
-                seen.add(item_id)
-                candidates.append(item)
-            if page >= int(data.get("total_pages") or 1):
-                break
+        for tmdb_type in self.__tmdb_types_for_media_type(media_type):
+            endpoint = f"/discover/{tmdb_type}"
+            for page in range(1, page_limit + 1):
+                params = self.__discover_params(media_type, tmdb_type, page)
+                logger.info(
+                    f"每日推荐请求 TMDb：type={self.__media_type_label(media_type)}, "
+                    f"tmdb_type={tmdb_type}, page={page}"
+                )
+                data = self.__tmdb_get(endpoint, params)
+                results = data.get("results") or []
+                logger.info(
+                    f"每日推荐 TMDb 返回：type={self.__media_type_label(media_type)}, "
+                    f"tmdb_type={tmdb_type}, page={page}, "
+                    f"results={len(results)}, total_pages={data.get('total_pages')}"
+                )
+                for item in results:
+                    item_id = item.get("id")
+                    seen_key = f"{tmdb_type}:{item_id}"
+                    if not item_id or seen_key in seen:
+                        continue
+                    seen.add(seen_key)
+                    item = dict(item)
+                    item["_dailyrecommend_tmdb_type"] = tmdb_type
+                    candidates.append(item)
+                if page >= int(data.get("total_pages") or 1):
+                    break
 
         today = self.__today()
         rnd = random.Random(f"{today}:{media_type}:{','.join(self._genres)}:{self._language_pref}")
@@ -681,7 +715,7 @@ class DailyRecommend(_PluginBase):
         scored.sort(key=lambda pair: pair[0], reverse=True)
         return [item for _, item in scored]
 
-    def __discover_params(self, media_type: str, page: int) -> Dict[str, Any]:
+    def __discover_params(self, media_type: str, tmdb_type: str, page: int) -> Dict[str, Any]:
         params = {
             "language": self._language,
             "include_adult": "false",
@@ -693,9 +727,16 @@ class DailyRecommend(_PluginBase):
         if self._language_pref == "zh":
             params["with_original_language"] = "zh"
 
-        if self._genres:
+        mapping = self._movie_genres if tmdb_type == "movie" else self._tv_genres
+        if media_type == "anime":
+            animation_id = str(mapping["animation"])
             ids = []
-            mapping = self._movie_genres if media_type == "movie" else self._tv_genres
+            for genre in self._genres:
+                if genre != "animation" and genre in mapping:
+                    ids.append(str(mapping[genre]))
+            params["with_genres"] = f"{animation_id},{'|'.join(ids)}" if ids else animation_id
+        elif self._genres:
+            ids = []
             for genre in self._genres:
                 if genre in mapping:
                     ids.append(str(mapping[genre]))
@@ -703,31 +744,37 @@ class DailyRecommend(_PluginBase):
                 params["with_genres"] = "|".join(ids)
 
         if self._year_start:
-            if media_type == "movie":
+            if tmdb_type == "movie":
                 params["primary_release_date.gte"] = f"{self._year_start}-01-01"
             else:
                 params["first_air_date.gte"] = f"{self._year_start}-01-01"
         if self._year_end:
-            if media_type == "movie":
+            if tmdb_type == "movie":
                 params["primary_release_date.lte"] = f"{self._year_end}-12-31"
             else:
                 params["first_air_date.lte"] = f"{self._year_end}-12-31"
         return params
 
     def __build_candidate(self, media_type: str, item: dict) -> Optional[Dict[str, Any]]:
-        title = item.get("title") if media_type == "movie" else item.get("name")
-        original_title = item.get("original_title") if media_type == "movie" else item.get("original_name")
-        date_value = item.get("release_date") if media_type == "movie" else item.get("first_air_date")
+        tmdb_type = item.get("_dailyrecommend_tmdb_type") or self.__tmdb_types_for_media_type(media_type)[0]
+        is_movie = tmdb_type == "movie"
+        title = item.get("title") if is_movie else item.get("name")
+        original_title = item.get("original_title") if is_movie else item.get("original_name")
+        date_value = item.get("release_date") if is_movie else item.get("first_air_date")
         year = self.__parse_year(date_value)
         if not title:
             return None
 
         genre_names = [self._genre_names.get(genre_id) for genre_id in item.get("genre_ids") or []]
         genre_names = [name for name in genre_names if name]
+        source_key = f"{tmdb_type}:{item.get('id')}"
+        key = f"{media_type}:{tmdb_type}:{item.get('id')}" if media_type == "anime" else f"{media_type}:{item.get('id')}"
         return {
-            "key": f"{media_type}:{item.get('id')}",
+            "key": key,
+            "source_key": source_key,
             "tmdbid": item.get("id"),
             "media_type": media_type,
+            "tmdb_type": tmdb_type,
             "title": title,
             "original_title": original_title,
             "year": year,
@@ -746,7 +793,8 @@ class DailyRecommend(_PluginBase):
         tmdbid = candidate.get("tmdbid")
         if not tmdbid:
             return
-        path = f"/movie/{tmdbid}" if candidate.get("media_type") == "movie" else f"/tv/{tmdbid}"
+        tmdb_type = candidate.get("tmdb_type") or self.__tmdb_types_for_media_type(candidate.get("media_type"))[0]
+        path = f"/{tmdb_type}/{tmdbid}"
         try:
             detail = self.__tmdb_get(path, {
                 "language": self._language,
@@ -772,7 +820,7 @@ class DailyRecommend(_PluginBase):
         meta = MetaInfo(candidate.get("title"))
         if candidate.get("year"):
             meta.year = candidate.get("year")
-        meta.type = MediaType.MOVIE if candidate.get("media_type") == "movie" else MediaType.TV
+        meta.type = self.__moviepilot_media_type(candidate)
 
         try:
             mediainfo: MediaInfo = self.chain.recognize_media(
@@ -811,7 +859,7 @@ class DailyRecommend(_PluginBase):
         channel: Any = None,
         userid: Any = None
     ):
-        media_type = MediaType.MOVIE if active.get("media_type") == "movie" else MediaType.TV
+        media_type = self.__moviepilot_media_type(active)
         meta = MetaInfo(active.get("title"))
         meta.type = media_type
         if active.get("year"):
@@ -882,7 +930,7 @@ class DailyRecommend(_PluginBase):
         channel: Any = None,
         userid: Any = None
     ):
-        mtype = "电影" if item.get("media_type") == "movie" else "电视剧"
+        mtype = self.__media_type_label(item.get("media_type"))
         title = f"今日推荐：{item.get('title')}"
 
         lines = [
@@ -1119,23 +1167,93 @@ class DailyRecommend(_PluginBase):
             raise RuntimeError(f"HTTP {res.status_code}: {res.text[:200]}")
         return res.json()
 
-    def __media_types_for_today(self) -> List[str]:
-        if self._media_type in {"movie", "tv"}:
-            return [self._media_type]
-        today = self.__today()
-        media_types = ["movie", "tv"]
-        random.Random(today).shuffle(media_types)
+    def __content_switches_from_config(self, config: dict) -> Tuple[bool, bool, bool]:
+        switch_keys = ("enable_movie", "enable_tv", "enable_anime")
+        if any(key in config for key in switch_keys):
+            return (
+                self.__safe_bool(config.get("enable_movie"), False),
+                self.__safe_bool(config.get("enable_tv"), False),
+                self.__safe_bool(config.get("enable_anime"), False)
+            )
+
+        media_type = config.get("media_type") or "mixed"
+        if media_type == "movie":
+            return True, False, False
+        if media_type == "tv":
+            return False, True, False
+        if media_type == "anime":
+            return False, False, True
+        return True, True, False
+
+    def __enabled_media_types(self) -> List[str]:
+        media_types = []
+        if self._enable_movie:
+            media_types.append("movie")
+        if self._enable_tv:
+            media_types.append("tv")
+        if self._enable_anime:
+            media_types.append("anime")
         return media_types
 
+    def __media_type_from_switches(self) -> str:
+        media_types = self.__enabled_media_types()
+        if media_types == ["movie"]:
+            return "movie"
+        if media_types == ["tv"]:
+            return "tv"
+        if media_types == ["anime"]:
+            return "anime"
+        if media_types == ["movie", "tv"]:
+            return "mixed"
+        if not media_types:
+            return "none"
+        return ",".join(media_types)
+
+    def __media_types_for_today(self) -> List[str]:
+        media_types = self.__enabled_media_types()
+        if len(media_types) <= 1:
+            return media_types
+        today = self.__today()
+        random.Random(f"{today}:{','.join(media_types)}").shuffle(media_types)
+        return media_types
+
+    @staticmethod
+    def __tmdb_types_for_media_type(media_type: Optional[str]) -> List[str]:
+        if media_type == "movie":
+            return ["movie"]
+        if media_type == "anime":
+            return ["movie", "tv"]
+        return ["tv"]
+
+    @staticmethod
+    def __media_type_label(media_type: Optional[str]) -> str:
+        if media_type == "movie":
+            return "电影"
+        if media_type == "anime":
+            return "动漫"
+        return "电视剧"
+
+    def __moviepilot_media_type(self, item: Dict[str, Any]) -> MediaType:
+        return MediaType.MOVIE if item.get("tmdb_type") == "movie" or item.get("media_type") == "movie" else MediaType.TV
+
+    @staticmethod
+    def __candidate_history_keys(item: Dict[str, Any]) -> set:
+        return {value for value in (item.get("key"), item.get("source_key")) if value}
+
     def __history_keys(self) -> set:
-        return {item.get("key") for item in (self.get_data("history") or []) if item.get("key")}
+        keys = set()
+        for item in self.get_data("history") or []:
+            keys.update(self.__candidate_history_keys(item))
+        return keys
 
     def __append_history(self, item: Dict[str, Any], result: str):
         history = self.get_data("history") or []
         history.append({
             "key": item.get("key"),
+            "source_key": item.get("source_key"),
             "title": item.get("title"),
             "media_type": item.get("media_type"),
+            "tmdb_type": item.get("tmdb_type"),
             "tmdbid": item.get("tmdbid"),
             "year": item.get("year"),
             "result": result,
@@ -1162,6 +1280,9 @@ class DailyRecommend(_PluginBase):
             "recommend_hour": self._recommend_hour,
             "tmdb_token": self._tmdb_token,
             "media_type": self._media_type,
+            "enable_movie": self._enable_movie,
+            "enable_tv": self._enable_tv,
+            "enable_anime": self._enable_anime,
             "language_pref": self._language_pref,
             "language": self._language,
             "genres": self._genres,
@@ -1176,6 +1297,16 @@ class DailyRecommend(_PluginBase):
             "notification_type": self._notification_type,
             "history_limit": self._history_limit
         })
+
+    @staticmethod
+    def __safe_bool(value: Any, default: bool = False) -> bool:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return default
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on", "y"}
+        return bool(value)
 
     @staticmethod
     def __safe_int(value: Any, default: int) -> int:
