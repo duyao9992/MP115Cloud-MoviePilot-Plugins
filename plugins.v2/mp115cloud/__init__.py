@@ -29,7 +29,7 @@ class MP115Cloud(_PluginBase):
     plugin_name = "115 云下载接管"
     plugin_desc = "订阅下载前搜索非公开搜索页，成功提交到 115 离线任务后拦截原下载，失败自动回落 MoviePilot 正常流程。"
     plugin_icon = ""
-    plugin_version = "1.0.10"
+    plugin_version = "1.0.11"
     plugin_author = "Codex"
     author_url = "https://github.com/jxxghp/MoviePilot-Plugins"
     plugin_config_prefix = "mp115cloud_"
@@ -1069,7 +1069,11 @@ class MP115Cloud(_PluginBase):
         )
         torrent_title = self._first(getattr(torrent, "title", None), getattr(meta, "org_string", None), base_title)
         year = self._first(getattr(media, "year", None), getattr(subscribe, "year", None), subscribe_info.get("year"), "")
-        season = season_list[0] if season_list else self._first(
+        media_type = self._first(getattr(media, "type", None), getattr(meta, "type", None), getattr(subscribe, "type", None), "")
+        media_type_text = self._media_type_text(media_type)
+        is_movie = self._is_movie_media_type(media_type_text)
+        is_tv_type = self._is_tv_media_type(media_type_text)
+        season = "" if is_movie else season_list[0] if season_list else self._first(
             getattr(media, "season", None),
             getattr(meta, "season", None),
             getattr(subscribe, "season", None),
@@ -1081,10 +1085,8 @@ class MP115Cloud(_PluginBase):
             self._season_from_text(torrent_title),
         )
         episode = episodes[0] if episodes else ""
-        media_type = self._first(getattr(media, "type", None), getattr(meta, "type", None), getattr(subscribe, "type", None), "")
-        media_type_text = self._media_type_text(media_type)
         season_number = self._season_number(season)
-        is_tv = self._is_tv_media_type(media_type) or bool(season_number)
+        is_tv = is_tv_type or (not is_movie and bool(season_number))
         search_title = self._tv_search_title(base_title, subscribe_title, season_number) if is_tv else base_title
         # 搜索站点第一步是影片检索，不是 PT 种子检索；匹配目标也以媒体标题为准。
         title_candidates = self._collect_title_candidates(media, meta)
@@ -2597,8 +2599,11 @@ class MP115Cloud(_PluginBase):
         keyword = (keyword or "").strip()
         variants: List[str] = []
         values = template_values or {}
-        target_season = MP115Cloud._target_season_number(values) or MP115Cloud._season_from_text(keyword)
-        if MP115Cloud._is_tv_context(values) or target_season:
+        is_movie_context = MP115Cloud._is_movie_media_type(values.get("media_type"))
+        is_tv_context = MP115Cloud._is_tv_context(values)
+        keyword_season = MP115Cloud._season_from_text(keyword)
+        target_season = MP115Cloud._target_season_number(values) or (keyword_season if not is_movie_context else 0)
+        if is_tv_context or (target_season and not is_movie_context):
             variants.extend(MP115Cloud._tv_search_keyword_fallbacks(keyword, values, target_season))
         for value in MP115Cloud._target_title_values(keyword) or [keyword]:
             for info in MP115Cloud._series_title_infos(value):
@@ -2879,8 +2884,15 @@ class MP115Cloud(_PluginBase):
         return text in {"电视剧", "剧集", "tv", "show", "series"} or "电视剧" in text
 
     @staticmethod
+    def _is_movie_media_type(value: Any) -> bool:
+        text = MP115Cloud._media_type_text(value).lower()
+        return text in {"电影", "movie", "movies", "film"} or "电影" in text
+
+    @staticmethod
     def _is_tv_context(values: Optional[Dict[str, Any]]) -> bool:
         values = values or {}
+        if MP115Cloud._is_movie_media_type(values.get("media_type")):
+            return False
         if MP115Cloud._is_tv_media_type(values.get("media_type")):
             return True
         return bool(values.get("is_tv") or values.get("season"))
@@ -2914,6 +2926,8 @@ class MP115Cloud(_PluginBase):
     @staticmethod
     def _target_season_number(values: Optional[Dict[str, Any]]) -> int:
         values = values or {}
+        if MP115Cloud._is_movie_media_type(values.get("media_type")):
+            return 0
         for key in ("season", "season_number", "season_index"):
             parsed = MP115Cloud._season_number(values.get(key))
             if parsed:
