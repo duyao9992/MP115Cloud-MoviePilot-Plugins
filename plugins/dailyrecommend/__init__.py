@@ -23,7 +23,7 @@ class DailyRecommend(_PluginBase):
     plugin_name = "每日推荐"
     plugin_desc = "根据偏好每天推荐电影、电视剧或动漫，使用 MoviePilot 原生通知命令订阅、换一部或跳过。"
     plugin_icon = "Moviepilot_A.png"
-    plugin_version = "0.2.4"
+    plugin_version = "0.2.5"
     plugin_author = "高端玩家定制"
     author_url = "https://github.com/duyao9992"
     plugin_config_prefix = "dailyrecommend_"
@@ -655,6 +655,9 @@ class DailyRecommend(_PluginBase):
                 if not candidate:
                     logger.info(f"每日推荐跳过无标题候选：{item}")
                     continue
+                if media_type != "anime" and self.__is_animation_item(candidate):
+                    logger.info(f"每日推荐跳过动画候选：{candidate.get('title')}，需开启推荐动漫")
+                    continue
                 candidate_keys = self.__candidate_history_keys(candidate)
                 if history_keys & candidate_keys:
                     logger.info(
@@ -738,10 +741,12 @@ class DailyRecommend(_PluginBase):
         elif self._genres:
             ids = []
             for genre in self._genres:
-                if genre in mapping:
+                if genre != "animation" and genre in mapping:
                     ids.append(str(mapping[genre]))
             if ids:
                 params["with_genres"] = "|".join(ids)
+        if media_type != "anime":
+            params["without_genres"] = str(mapping["animation"])
 
         if self._year_start:
             if tmdb_type == "movie":
@@ -785,6 +790,7 @@ class DailyRecommend(_PluginBase):
             "vote_count": item.get("vote_count"),
             "popularity": item.get("popularity"),
             "genres": genre_names,
+            "genre_ids": item.get("genre_ids") or [],
             "poster": self.__image_url(item.get("poster_path")),
             "original_language": item.get("original_language")
         }
@@ -1239,6 +1245,13 @@ class DailyRecommend(_PluginBase):
     @staticmethod
     def __candidate_history_keys(item: Dict[str, Any]) -> set:
         return {value for value in (item.get("key"), item.get("source_key")) if value}
+
+    @staticmethod
+    def __is_animation_item(item: Dict[str, Any]) -> bool:
+        genre_ids = {str(genre_id) for genre_id in item.get("genre_ids") or []}
+        if "16" in genre_ids:
+            return True
+        return "动画" in set(item.get("genres") or [])
 
     def __history_keys(self) -> set:
         keys = set()
