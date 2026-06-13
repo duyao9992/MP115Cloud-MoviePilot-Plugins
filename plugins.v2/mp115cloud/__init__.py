@@ -29,7 +29,7 @@ class MP115Cloud(_PluginBase):
     plugin_name = "115 云下载接管"
     plugin_desc = "订阅下载前搜索非公开搜索页，成功提交到 115 离线任务后拦截原下载，失败自动回落 MoviePilot 正常流程。"
     plugin_icon = ""
-    plugin_version = "1.0.11"
+    plugin_version = "1.0.12"
     plugin_author = "Codex"
     author_url = "https://github.com/jxxghp/MoviePilot-Plugins"
     plugin_config_prefix = "mp115cloud_"
@@ -452,6 +452,13 @@ class MP115Cloud(_PluginBase):
             return
 
         search_context = self._build_search_context(event_data)
+        if self._is_tv_context(search_context) and not self._target_season_number(search_context):
+            search_context["season"] = "1"
+            search_context["season_inferred"] = "1"
+            logger.info(
+                f"[MP115Cloud] 电视剧未识别到目标季，按首季整季包规则尝试接管: "
+                f"{search_context.get('title') or search_context.get('media_title')}"
+            )
         submission_keys = self._submission_guard_lookup_keys(search_context, origin)
         if self._is_recent_submission(submission_keys):
             self._log_recent_submission_skip(search_context, origin, submission_keys)
@@ -463,9 +470,6 @@ class MP115Cloud(_PluginBase):
         keyword = self._render_template(self._query_template, search_context).strip()
         if not keyword:
             logger.warning("[MP115Cloud] 搜索关键词为空，跳过")
-            return
-        if self._is_tv_context(search_context) and not self._target_season_number(search_context):
-            logger.info(f"[MP115Cloud] 电视剧未识别到目标季，跳过接管并回落 MoviePilot 原流程: {keyword}")
             return
 
         logger.info(f"[MP115Cloud] 开始搜索非公开搜索页: {keyword}")
@@ -514,9 +518,7 @@ class MP115Cloud(_PluginBase):
         allow_keyword_fallback: bool = True,
     ) -> Tuple[List[Dict[str, Any]], str]:
         tv_season_pack_only = self._is_tv_context(template_values)
-        target_season = self._target_season_number(template_values)
-        if tv_season_pack_only and not target_season:
-            return [], "电视剧未识别到目标季，回落 MoviePilot 原流程"
+        target_season = self._tv_pack_target_season(template_values)
         try:
             values = self._search_template_values(keyword, template_values)
             url = self._render_template(self._search_url, values)
@@ -2602,7 +2604,7 @@ class MP115Cloud(_PluginBase):
         is_movie_context = MP115Cloud._is_movie_media_type(values.get("media_type"))
         is_tv_context = MP115Cloud._is_tv_context(values)
         keyword_season = MP115Cloud._season_from_text(keyword)
-        target_season = MP115Cloud._target_season_number(values) or (keyword_season if not is_movie_context else 0)
+        target_season = MP115Cloud._tv_pack_target_season(values) or (keyword_season if not is_movie_context else 0)
         if is_tv_context or (target_season and not is_movie_context):
             variants.extend(MP115Cloud._tv_search_keyword_fallbacks(keyword, values, target_season))
         for value in MP115Cloud._target_title_values(keyword) or [keyword]:
@@ -2933,6 +2935,13 @@ class MP115Cloud(_PluginBase):
             if parsed:
                 return parsed
         return 0
+
+    @staticmethod
+    def _tv_pack_target_season(values: Optional[Dict[str, Any]]) -> int:
+        target_season = MP115Cloud._target_season_number(values)
+        if target_season:
+            return target_season
+        return 1 if MP115Cloud._is_tv_context(values) else 0
 
     @staticmethod
     def _season_from_text(value: Any) -> int:
